@@ -10,6 +10,7 @@ import android.graphics.PointF
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.view.MotionEvent
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -69,6 +70,9 @@ class AtenaAccessibilityService : AccessibilityService() {
     private var overlayMessage = "Inicia la escucha desde ATENA"
     private var lastTarget: PointF? = null
     private var patternOverlay: CaptureOverlay? = null
+    private var countdownOverlay: CountdownOverlay? = null
+    private var playbackOverlay: PlaybackOverlay? = null
+    private var countdownTick: Runnable? = null
     private var pendingRecordSlot: Int? = null
     private var recordingSlot: Int? = null
     private var recorded = mutableListOf<TapPatternStore.Point>()
@@ -200,65 +204,105 @@ class AtenaAccessibilityService : AccessibilityService() {
         } else "Android rechazó el toque. Comprueba el permiso de accesibilidad."
     }
 
-    /** Da seis segundos para salir de ATENA y abrir la pantalla que se desea grabar. */
+    /** 4 segundos para abrir la app; durante la espera la capa NO bloquea la pantalla. */
     private fun prepareRecording(slot: Int): String {
         if (slot !in 1..3) return "Solo hay patrones 1, 2 y 3."
         if (recordingSlot != null || pendingRecordSlot != null || replaying)
-            return "Termina la operación anterior antes de grabar otro patrón."
+            return "Primero termina la grabación o reproducción anterior."
         previousGridVisible = gridVisible
         hideGridInternal()
         pendingRecordSlot = slot
         recorded.clear()
+        val countdown = CountdownOverlay()
+        try {
+            windows.addView(countdown, floatingParams(touchable = false))
+            countdownOverlay = countdown
+        } catch (e: Exception) {
+            pendingRecordSlot = null
+            restoreGridAfterRecording()
+            return "Android no permitió mostrar la cuenta atrás: ${e.message}"
+        }
+        val startedAt = SystemClock.uptimeMillis()
+        val tick = object : Runnable {
+            override fun run() {
+                if (pendingRecordSlot != slot) return
+                val elapsed = SystemClock.uptimeMillis() - startedAt
+                val secondsLeft = (4 - (elapsed / 1000L).toInt()).coerceIn(0, 4)
+                countdown.secondsLeft = secondsLeft
+                countdown.invalidate()
+                if (elapsed < PatternRules.PREPARE_MILLIS) {
+                    ui.postDelayed(this, 100L)
+                }
+            }
+        }
+        countdownTick = tick
+        ui.post(tick)
         val start = Runnable { startRecordingNow(slot) }
         recordStart = start
-        ui.postDelayed(start, 6000)
-        val message = "Patrón $slot: tienes 6 segundos para abrir la pantalla destino. Luego toca hasta 8 puntos. La franja superior tendrá GUARDAR y CANCELAR."
+        ui.postDelayed(start, PatternRules.PREPARE_MILLIS)
+        val message = "Patrón $slot: tienes 4 segundos para llegar a la pantalla. Luego marca entre 2 y 4 puntos amarillos y toca el círculo blanco para GUARDAR."
         broadcast(message)
         return message
+    }
+
+    private fun floatingParams(touchable: Boolean): WindowManager.LayoutParams =
+        WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                (if (touchable) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE),
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+    private fun removeCountdown() {
+        countdownTick?.let { ui.removeCallbacks(it) }
+        countdownTick = null
+        countdownOverlay?.let { try { windows.removeView(it) } catch (_: Exception) {} }
+        countdownOverlay = null
     }
 
     private fun startRecordingNow(slot: Int) {
         if (pendingRecordSlot != slot) return
         pendingRecordSlot = null
         recordStart = null
-        recordingSlot = slot
+        removeCountdown()
         val view = CaptureOverlay()
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.START }
         try {
-            windows.addView(view, params)
+            windows.addView(view, floatingParams(touchable = true))
             patternOverlay = view
-            broadcast("GRABANDO PATRÓN $slot: toca hasta 8 posiciones; arriba GUARDAR/CANCELAR. Estos toques no ejecutan acciones mientras grabas.")
+            recordingSlot = slot
+            broadcast("GRABACIÓN ACTIVA: toca 2 a 4 posiciones. Verás círculos AMARILLOS. Círculo BLANCO = GUARDAR.")
         } catch (e: Exception) {
             recordingSlot = null
-            broadcast("No se pudo abrir la pantalla de grabación: ${e.message}")
+            broadcast("No se pudo iniciar la captura de toques: ${e.message}")
             restoreGridAfterRecording()
         }
     }
 
     private fun finishRecording(save: Boolean): String {
         val slot = recordingSlot ?: return "No hay patrón en grabación."
+        if (save && !PatternRules.canSave(recorded.size)) {
+            val message = "Necesitas entre 2 y 4 puntos. Llevas ${recorded.size}; falta ${PatternRules.MIN_STEPS - recorded.size} como mínimo."
+            broadcast(message)
+            patternOverlay?.showMessage(message)
+            return message
+        }
         recordingSlot = null
         patternOverlay?.let { try { windows.removeView(it) } catch (_: Exception) {} }
         patternOverlay = null
-        val result = if (save && recorded.isNotEmpty()) {
+        val result = if (save) {
             try {
                 TapPatternStore.save(this, slot,
                     TapPatternStore.Pattern(resources.configuration.orientation, recorded.toList()))
-                "PATRÓN $slot GUARDADO: ${recorded.size} toque(s)."
-            } catch (e: Exception) { "No se pudo guardar patrón: ${e.message}" }
-        } else if (save) {
-            "No grabaste ninguna posición. No se reemplazó el patrón anterior."
-        } else "Grabación del patrón $slot cancelada."
+                "PATRÓN $slot GUARDADO: ${recorded.size} círculos amarillos."
+            } catch (e: Exception) { "No se pudo guardar el patrón $slot: ${e.message}" }
+        } else "Grabación del patrón $slot cancelada. No se reemplazó lo anterior."
         recorded.clear()
         restoreGridAfterRecording()
         broadcast(result)
+        reportOnOverlay(result)
         return result
     }
 
@@ -275,33 +319,58 @@ class AtenaAccessibilityService : AccessibilityService() {
         return "Patrón $slot borrado."
     }
 
-    /** Al reproducir desde el menú hay seis segundos para volver a la pantalla destino. */
+    /** Al reproducir desde el menú hay seis segundos para regresar a la pantalla elegida. */
     private fun playSavedPattern(slot: Int, delayed: Boolean): String {
         if (slot !in 1..3) return "Patrón no válido."
         if (replaying || recordingSlot != null || pendingRecordSlot != null)
             return "ATENA está grabando o ejecutando otro patrón."
-        val pattern = TapPatternStore.load(this, slot) ?: return "El patrón $slot todavía no está guardado."
+        val pattern = TapPatternStore.load(this, slot)
+            ?: return "Patrón $slot no guardado o antiguo. Grábalo otra vez con 2 a 4 puntos."
         if (pattern.orientation != resources.configuration.orientation)
-            return "La orientación cambió. Vuelve a la orientación en que grabaste el patrón $slot."
+            return "La orientación cambió. Usa la misma orientación de la grabación."
         replaying = true
         val run = ++replayGeneration
         val delay = if (delayed) 6000L else 300L
         ui.postDelayed({ if (replaying && replayGeneration == run) playNextPoint(slot, pattern.points, 0, run) }, delay)
-        return if (delayed) "Patrón $slot: inicia en 6 segundos; abre la pantalla destino."
-            else "Ejecutando patrón $slot con ${pattern.points.size} toque(s)."
+        return if (delayed) "Patrón $slot: comienza en 6 segundos. Vuelve a la pantalla de destino."
+            else "Ejecutando patrón $slot: ${pattern.points.size} toques."
+    }
+
+    private fun showPlaybackTarget(slot: Int, index: Int, total: Int, x: Float, y: Float) {
+        val view = playbackOverlay ?: PlaybackOverlay().also {
+            try {
+                windows.addView(it, floatingParams(touchable = false))
+                playbackOverlay = it
+            } catch (e: Exception) { broadcast("No se pudo mostrar el círculo amarillo: ${e.message}") }
+        }
+        view.displayTarget = PointF(x, y)
+        view.stepLabel = "Patrón $slot · Toque ${index + 1}/$total"
+        view.invalidate()
+    }
+
+    private fun removePlaybackOverlay() {
+        playbackOverlay?.let { try { windows.removeView(it) } catch (_: Exception) {} }
+        playbackOverlay = null
+    }
+
+    private fun finishPlayback(message: String) {
+        replaying = false
+        removePlaybackOverlay()
+        broadcast(message)
+        reportOnOverlay(message)
     }
 
     private fun playNextPoint(slot: Int, points: List<TapPatternStore.Point>, index: Int, run: Int) {
         if (!replaying || replayGeneration != run) return
         if (index == points.size) {
-            replaying = false
-            broadcast("PATRÓN $slot TERMINADO: ${points.size} toque(s) completados.")
+            finishPlayback("PATRÓN $slot FINALIZADO: ${points.size} pulsaciones enviadas a Android.")
             return
         }
         val bounds = windows.currentWindowMetrics.bounds
         val point = points[index]
         val x = bounds.left + point.x * bounds.width()
         val y = bounds.top + point.y * bounds.height()
+        showPlaybackTarget(slot, index, points.size, x, y)
         val path = Path().apply { moveTo(x, y) }
         val gesture = GestureDescription.Builder().addStroke(
             GestureDescription.StrokeDescription(path, 0, 95)
@@ -309,76 +378,171 @@ class AtenaAccessibilityService : AccessibilityService() {
         val accepted = try {
             dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
-                    ui.postDelayed({ playNextPoint(slot, points, index + 1, run) }, 600L)
+                    ui.postDelayed({ playNextPoint(slot, points, index + 1, run) }, 650L)
                 }
                 override fun onCancelled(gestureDescription: GestureDescription?) {
-                    replaying = false
-                    broadcast("Android canceló el toque ${index + 1} del patrón $slot.")
+                    finishPlayback("Android canceló la pulsación ${index + 1} del patrón $slot.")
                 }
             }, null)
         } catch (e: Exception) {
-            replaying = false
-            broadcast("Error ejecutando patrón $slot: ${e.message}")
+            finishPlayback("Error en patrón $slot: ${e.message}")
             false
         }
-        if (!accepted && replaying) {
-            replaying = false
-            broadcast("Android rechazó el toque ${index + 1} del patrón $slot.")
+        if (!accepted && replaying) finishPlayback("Android rechazó el toque ${index + 1} del patrón $slot.")
+    }
+
+    /** Círculo amarillo de cuenta atrás, sin interceptar la navegación. */
+    private inner class CountdownOverlay : View(this@AtenaAccessibilityService) {
+        var secondsLeft = 4
+        private val yellow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 216, 0) }
+        private val numberPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            textSize = 30f * resources.displayMetrics.scaledDensity
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+        }
+        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 216, 0)
+            textSize = 15f * resources.displayMetrics.scaledDensity
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textAlign = Paint.Align.CENTER
+            setShadowLayer(3f, 1f, 1f, Color.BLACK)
+        }
+        override fun onDraw(canvas: Canvas) {
+            val den = resources.displayMetrics.density
+            val cx = width * .5f
+            val cy = 85f * den
+            canvas.drawCircle(cx, cy, 34f * den, yellow)
+            canvas.drawText(secondsLeft.toString(), cx,
+                cy - (numberPaint.ascent() + numberPaint.descent()) / 2f, numberPaint)
+            canvas.drawText("ABRE LA PANTALLA DESTINO", cx, cy + 62f * den, textPaint)
         }
     }
 
-    /** Capa temporal táctil: graba coordenadas, no hace clic durante la captura. */
+    /** Capa transparente táctil: hasta 4 círculos AMARILLOS; el círculo BLANCO finaliza. */
     private inner class CaptureOverlay : View(this@AtenaAccessibilityService) {
-        private val background = Paint().apply { color = Color.argb(34, 0, 150, 240) }
-        private val top = Paint().apply { color = Color.argb(245, 10, 29, 50) }
-        private val font = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        private val density = resources.displayMetrics.density
+        private val yellow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(255, 215, 0) }
+        private val yellowOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 215, 0)
+            style = Paint.Style.STROKE
+            strokeWidth = 4f * density
+        }
+        private val white = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        private val black = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(21, 28, 40) }
+        private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             typeface = android.graphics.Typeface.DEFAULT_BOLD
-            textSize = 14f * resources.displayMetrics.scaledDensity
+            textSize = 13f * resources.displayMetrics.scaledDensity
+            textAlign = Paint.Align.CENTER
+            setShadowLayer(4f, 1f, 1f, Color.BLACK)
+        }
+        private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textSize = 13f * resources.displayMetrics.scaledDensity
             textAlign = Paint.Align.CENTER
         }
-        private val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.YELLOW
-            style = Paint.Style.STROKE
-            strokeWidth = 3f * resources.displayMetrics.density
+        private val bar = Paint().apply { color = Color.argb(155, 10, 26, 48) }
+        private var customMessage = "Toca entre 2 y 4 puntos"
+        private val finishX get() = width - 52f * density
+        private val cancelX get() = 52f * density
+        private val buttonY get() = 68f * density
+        private val buttonRadius get() = 29f * density
+
+        fun showMessage(msg: String) {
+            customMessage = msg
+            invalidate()
         }
-        private val barHeight get() = 82f * resources.displayMetrics.density
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), background)
-            canvas.drawRect(0f, 0f, width.toFloat(), barHeight, top)
-            val y = 29f * resources.displayMetrics.density
-            canvas.drawText("CANCELAR", width * 0.25f, y, font)
-            canvas.drawText("GUARDAR", width * 0.75f, y, font)
-            canvas.drawText("Patrón ${recordingSlot ?: '-'}: ${recorded.size}/8 toques (debajo de esta barra)",
-                width * 0.5f, 62f * resources.displayMetrics.density, font)
-            val bounds = windows.currentWindowMetrics.bounds
-            for (pt in recorded) {
-                val xx = bounds.left + pt.x * bounds.width()
-                val yy = bounds.top + pt.y * bounds.height()
-                canvas.drawCircle(xx, yy, 13f * resources.displayMetrics.density, mark)
+            val barHeight = 116f * density
+            canvas.drawRect(0f, 0f, width.toFloat(), barHeight, bar)
+            // CANCELAR = círculo amarillo; GUARDAR = único círculo blanco.
+            canvas.drawCircle(cancelX, buttonY, buttonRadius, yellow)
+            canvas.drawText("×", cancelX, buttonY - (label.ascent() + label.descent()) / 2f, label)
+            canvas.drawCircle(finishX, buttonY, buttonRadius, white)
+            canvas.drawText("✓", finishX, buttonY - (label.ascent() + label.descent()) / 2f, label)
+            canvas.drawText("CANCELAR", cancelX, 111f * density, text)
+            canvas.drawText("GUARDAR", finishX, 111f * density, text)
+            canvas.drawText("PATRÓN ${recordingSlot ?: '-'} · ${recorded.size}/4", width/2f, 45f*density, text)
+            canvas.drawText(customMessage.take(40), width/2f, 87f*density, text)
+            // Coordenadas locales del mismo overlay táctil; cada marca es un círculo amarillo.
+            for ((index, pt) in recorded.withIndex()) {
+                val bounds = windows.currentWindowMetrics.bounds
+                val screenX = bounds.left + pt.x * bounds.width()
+                val screenY = bounds.top + pt.y * bounds.height()
+                val loc = IntArray(2)
+                getLocationOnScreen(loc)
+                val localX = screenX - loc[0]
+                val localY = screenY - loc[1]
+                canvas.drawCircle(localX, localY, 20f*density, yellowOutline)
+                canvas.drawCircle(localX, localY, 13f*density, yellow)
+                canvas.drawText("${index+1}", localX,
+                    localY - (label.ascent()+label.descent())/2f, label)
             }
         }
         override fun onTouchEvent(event: MotionEvent): Boolean {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> return true
-                MotionEvent.ACTION_UP -> {
-                    if (event.y < barHeight) {
-                        finishRecording(event.x >= width / 2f)
-                    } else if (recorded.size < TapPatternStore.MAX_STEPS) {
-                        val bounds = windows.currentWindowMetrics.bounds
-                        val px = ((event.rawX - bounds.left) / bounds.width().toFloat()).coerceIn(0f, 1f)
-                        val py = ((event.rawY - bounds.top) / bounds.height().toFloat()).coerceIn(0f, 1f)
-                        recorded.add(TapPatternStore.Point(px, py))
-                        broadcast("PATRÓN ${recordingSlot ?: '-'}: toque ${recorded.size} de 8 registrado.")
-                        invalidate()
-                    } else {
-                        broadcast("Límite de 8 toques alcanzado; pulsa GUARDAR arriba.")
-                    }
-                    return true
-                }
-                else -> return true
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) return true
+            if (event.actionMasked != MotionEvent.ACTION_UP) return true
+            val dxFinish = event.x - finishX
+            val dxCancel = event.x - cancelX
+            val dy = event.y - buttonY
+            val hitRadius = 41f * density
+            if (dxFinish*dxFinish + dy*dy <= hitRadius*hitRadius) {
+                finishRecording(save = true)
+                return true
             }
+            if (dxCancel*dxCancel + dy*dy <= hitRadius*hitRadius) {
+                finishRecording(save = false)
+                return true
+            }
+            // La cabecera jamás se memoriza como pulsación por error.
+            if (event.y <= 116f*density) return true
+            if (!PatternRules.canAdd(recorded.size)) {
+                showMessage("Máximo 4 puntos. Toca círculo blanco")
+                return true
+            }
+            val pos = IntArray(2)
+            getLocationOnScreen(pos)
+            val screenX = pos[0] + event.x
+            val screenY = pos[1] + event.y
+            val bounds = windows.currentWindowMetrics.bounds
+            val px = ((screenX - bounds.left) / bounds.width().toFloat()).coerceIn(0f, 1f)
+            val py = ((screenY - bounds.top) / bounds.height().toFloat()).coerceIn(0f, 1f)
+            recorded.add(TapPatternStore.Point(px, py))
+            customMessage = if (recorded.size >= PatternRules.MIN_STEPS)
+                "Ya puedes pulsar el círculo blanco" else "Falta por lo menos un punto"
+            invalidate()
+            broadcast("PATRÓN ${recordingSlot ?: '-'}: ${recorded.size}/4 puntos marcados.")
+            return true
+        }
+    }
+
+    /** Indicador amarillo durante la reproducción; no bloquea las pulsaciones enviadas. */
+    private inner class PlaybackOverlay : View(this@AtenaAccessibilityService) {
+        var displayTarget: PointF? = null
+        var stepLabel = ""
+        private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 216, 0)
+            style = Paint.Style.STROKE
+            strokeWidth = 5f * resources.displayMetrics.density
+        }
+        private val message = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 216, 0)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textSize = 15f * resources.displayMetrics.scaledDensity
+            textAlign = Paint.Align.CENTER
+            setShadowLayer(3f, 1f, 1f, Color.BLACK)
+        }
+        override fun onDraw(canvas: Canvas) {
+            val den = resources.displayMetrics.density
+            displayTarget?.let { target ->
+                val loc = IntArray(2)
+                getLocationOnScreen(loc)
+                canvas.drawCircle(target.x - loc[0], target.y - loc[1], 23f*den, ring)
+            }
+            canvas.drawText(stepLabel, width * .5f, 90f * den, message)
         }
     }
 
@@ -482,6 +646,8 @@ class AtenaAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         recordStart?.let { ui.removeCallbacks(it) }
         recordStart = null
+        removeCountdown()
+        removePlaybackOverlay()
         pendingRecordSlot = null
         recordingSlot = null
         patternOverlay?.let { try { windows.removeView(it) } catch (_: Exception) {} }

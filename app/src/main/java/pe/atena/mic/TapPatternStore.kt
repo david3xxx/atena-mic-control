@@ -6,14 +6,14 @@ import org.json.JSONObject
 
 /** Guarda únicamente posiciones de toques normalizadas; NO captura imágenes ni contraseñas. */
 object TapPatternStore {
-    const val MAX_STEPS = 8
+    const val MAX_STEPS = PatternRules.MAX_STEPS
     data class Point(val x: Float, val y: Float)
     data class Pattern(val orientation: Int, val points: List<Point>)
     private const val PREFS = "atena_user_tap_patterns_v1"
 
     fun save(context: Context, slot: Int, pattern: Pattern) {
         require(slot in 1..3)
-        require(pattern.points.size in 1..MAX_STEPS)
+        require(PatternRules.canSave(pattern.points.size))
         val json = JSONObject()
             .put("orientation", pattern.orientation)
             .put("taps", JSONArray().apply {
@@ -32,7 +32,7 @@ object TapPatternStore {
         return try {
             val json = JSONObject(stored)
             val taps = json.getJSONArray("taps")
-            if (taps.length() !in 1..MAX_STEPS) return null
+            if (!PatternRules.canSave(taps.length())) return null
             val points = (0 until taps.length()).map { i ->
                 val p = taps.getJSONObject(i)
                 Point(p.getDouble("x").toFloat(), p.getDouble("y").toFloat())

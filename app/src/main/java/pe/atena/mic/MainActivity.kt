@@ -61,7 +61,7 @@ class MainActivity : Activity() {
         fun addButton(value: String, onTap: () -> Unit) {
             column.addView(Button(this).apply { text = value; setOnClickListener { onTap() } })
         }
-        addText("ATENA V1.0 · PATRONES DE TOQUES", true)
+        addText("ATENA V1.1 · PATRONES CON CÍRCULOS", true)
         addText("PRIMERO · Comprueba el micrófono. Habla y mira si se mueve la barra. No necesitas activar la cuadrícula para esta prueba.")
         inputSpinner = Spinner(this)
         column.addView(inputSpinner)
@@ -93,7 +93,7 @@ class MainActivity : Activity() {
         addButton("2. SUBCASILLA 16 · TOCAR") { report(AtenaAccessibilityService.selectCell(16)) }
         addButton("REINICIAR CUADRÍCULA") { report(AtenaAccessibilityService.restartGrid()) }
         addButton("OCULTAR CUADRÍCULA") { report(AtenaAccessibilityService.hideGrid()) }
-        addText("PATRONES · Graba hasta 3 secuencias de 1 a 8 pulsaciones. Al pulsar GRABAR tendrás 6 segundos para abrir la pantalla deseada. Cuando aparezca la capa azul, toca los puntos en orden y arriba pulsa GUARDAR. Durante la grabación los toques NO se ejecutan.")
+        addText("PATRONES · Pulsa GRABAR y tendrás exactamente 4 segundos para ir a la pantalla elegida. Aparecerá una capa táctil: marca de 2 a 4 posiciones en orden; cada una se marca con un CÍRCULO AMARILLO. Al terminar toca el CÍRCULO BLANCO (✓) para guardar. El círculo amarillo (×) cancela. Los toques solo se graban: no activan botones durante la captura.")
         for (slot in 1..3) {
             addText("PATRÓN $slot · di 'patrón ${listOf("uno", "dos", "tres")[slot - 1]}' para reproducir.")
             addButton("GRABAR PATRÓN $slot") { report(AtenaAccessibilityService.recordPattern(slot)) }
@@ -112,7 +112,7 @@ class MainActivity : Activity() {
         addText("DIAGNÓSTICO · Los mensajes más recientes aparecen primero. La cuadrícula también muestra el último estado de ATENA.")
         status = TextView(this).apply {
             textSize = 15f
-            text = "• ATENA lista. Primero prueba 16 → 16 con botones.\n"
+            text = "• ATENA lista. Para patrones, graba entre 2 y 4 puntos con círculos amarillos.\n"
             setPadding(4, 12, 4, 18)
         }
         column.addView(status)

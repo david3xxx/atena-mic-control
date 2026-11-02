@@ -1,2 +1,11 @@
-ATENA V1.0
-1) Extrae el ZIP. 2) Abre https://github.com/david3xxx/atena-mic-control/upload/main 3) Arrastra los archivos de la carpeta extraída, incluidas las carpetas app y .github si aparecen. 4) Commit changes. 5) GitHub Actions compilará la APK.
+ATENA V1.1 — Grabación por círculos
+
+1) Extrae ZIP en PC.
+2) Ve a https://github.com/david3xxx/atena-mic-control/upload/main
+3) Arrastra el CONTENIDO de la carpeta extraída (no el ZIP) y confirma Commit changes.
+4) Abre https://github.com/david3xxx/atena-mic-control/actions
+5) En el último resultado exitoso (verde), baja hasta Artifacts y descarga el APK comprimido.
+6) Extrae app-debug.apk del ZIP en el celular e instálalo.
+7) Comprueba en la app que dice ATENA V1.1.
+
+La descarga final desde GitHub requiere que el workflow compile primero.
