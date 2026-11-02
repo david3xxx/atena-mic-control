@@ -539,6 +539,13 @@ class VoiceCaptureService : Service() {
 
     private fun handleCommand(heard: String) {
         publish("RESULTADO FINAL: '${heard.ifBlank { "(sin palabras)" }}'")
+        val slot = PatternSpeech.slot(heard)
+        if (slot != null) {
+            publish("COMANDO DE VOZ: patrón $slot")
+            publish(AtenaAccessibilityService.playPattern(slot, delayed = false))
+            scheduleNext(1400)
+            return
+        }
         val number = GridSpeech.number(heard)
         if (number != null) {
             publish("NÚMERO RECONOCIDO: $number")

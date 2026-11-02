@@ -1,12 +1,2 @@
-ATENA V0.9 — INSTALADOR POR GITHUB
-
-1. Descomprime el ZIP en tu computadora.
-2. Entra a https://github.com/david3xxx/atena-mic-control/upload/main
-3. Arrastra TODOS los archivos y carpetas que están DENTRO de ATENA_V0_9_BARRA_AUDIO_FUENTES (incluida la carpeta oculta .github si aparece).
-4. Confirma sobrescritura y pulsa Commit changes.
-5. GitHub -> Actions -> último flujo "Compilar ATENA v0.9". Al estar en verde, descarga ATENA-V0-9-BARRA-AUDIO-APK.
-6. Descomprime el artifact y abre app-debug.apk en tu Samsung.
-
-Cuando termines de subir, escribe: ATENA, YA SUBÍ LA V0.9.
-
-Si GitHub no muestra la acción, comprueba que el flujo .github/workflows/build-apk.yml siga guardado.
+ATENA V1.0
+1) Extrae el ZIP. 2) Abre https://github.com/david3xxx/atena-mic-control/upload/main 3) Arrastra los archivos de la carpeta extraída, incluidas las carpetas app y .github si aparecen. 4) Commit changes. 5) GitHub Actions compilará la APK.

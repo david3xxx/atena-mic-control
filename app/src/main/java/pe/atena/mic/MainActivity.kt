@@ -61,7 +61,7 @@ class MainActivity : Activity() {
         fun addButton(value: String, onTap: () -> Unit) {
             column.addView(Button(this).apply { text = value; setOnClickListener { onTap() } })
         }
-        addText("ATENA V0.9 · BARRA DE SONIDO", true)
+        addText("ATENA V1.0 · PATRONES DE TOQUES", true)
         addText("PRIMERO · Comprueba el micrófono. Habla y mira si se mueve la barra. No necesitas activar la cuadrícula para esta prueba.")
         inputSpinner = Spinner(this)
         column.addView(inputSpinner)
@@ -93,6 +93,16 @@ class MainActivity : Activity() {
         addButton("2. SUBCASILLA 16 · TOCAR") { report(AtenaAccessibilityService.selectCell(16)) }
         addButton("REINICIAR CUADRÍCULA") { report(AtenaAccessibilityService.restartGrid()) }
         addButton("OCULTAR CUADRÍCULA") { report(AtenaAccessibilityService.hideGrid()) }
+        addText("PATRONES · Graba hasta 3 secuencias de 1 a 8 pulsaciones. Al pulsar GRABAR tendrás 6 segundos para abrir la pantalla deseada. Cuando aparezca la capa azul, toca los puntos en orden y arriba pulsa GUARDAR. Durante la grabación los toques NO se ejecutan.")
+        for (slot in 1..3) {
+            addText("PATRÓN $slot · di 'patrón ${listOf("uno", "dos", "tres")[slot - 1]}' para reproducir.")
+            addButton("GRABAR PATRÓN $slot") { report(AtenaAccessibilityService.recordPattern(slot)) }
+            addButton("PROBAR PATRÓN $slot · EJECUTAR EN 6 s") {
+                report(AtenaAccessibilityService.playPattern(slot, delayed = true))
+            }
+            addButton("BORRAR PATRÓN $slot") { report(AtenaAccessibilityService.deletePattern(slot)) }
+        }
+        addText("ATENCIÓN: los patrones son coordenadas, no nombres de botones. Úsalos solo en la misma aplicación, orientación y pantalla. No guardes ni ejecutes toques sobre contraseñas, pagos o acciones irreversibles. Para comandos de voz, primero inicia ESCUCHA en MODO COMPATIBLE. Si el motor Android no reconoce voz, la orden verbal tampoco funcionará.")
         addText("TERCERO · Desactiva temporalmente Google Voice Access al probar ATENA. Para probar reconocimiento, pulsa iniciar escucha y di 'dieciséis', después 'dieciséis'.")
         addText("PASO 4 · Iniciar la escucha. Primero usa el modo compatible. Ese modo utiliza el reconocimiento habitual de Android y NO garantiza que el audio proceda de los auriculares.")
         addButton("INICIAR ESCUCHA · MODO COMPATIBLE") { start(VoiceCaptureService.MODE_COMPATIBLE) }

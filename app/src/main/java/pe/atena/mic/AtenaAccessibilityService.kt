@@ -9,6 +9,7 @@ import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.PixelFormat
 import android.graphics.RectF
+import android.view.MotionEvent
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -35,6 +36,13 @@ class AtenaAccessibilityService : AccessibilityService() {
         fun selectCell(number: Int): String = current.get()?.selectCellInternal(number)
             ?: "Activa ATENA en Accesibilidad para seleccionar casillas."
 
+        fun recordPattern(slot: Int): String = current.get()?.prepareRecording(slot)
+            ?: "Activa ATENA en Accesibilidad para grabar patrones."
+        fun playPattern(slot: Int, delayed: Boolean = false): String = current.get()?.playSavedPattern(slot, delayed)
+            ?: "Activa ATENA en Accesibilidad para ejecutar patrones."
+        fun deletePattern(slot: Int): String = current.get()?.deleteSavedPattern(slot)
+            ?: "Activa ATENA en Accesibilidad para borrar patrones."
+
         /** La cuadrícula muestra el estado también cuando ATENA está encima de otra app. */
         fun showVoiceState(message: String) {
             current.get()?.reportOnOverlay(message)
@@ -60,6 +68,14 @@ class AtenaAccessibilityService : AccessibilityService() {
     private val ui = Handler(Looper.getMainLooper())
     private var overlayMessage = "Inicia la escucha desde ATENA"
     private var lastTarget: PointF? = null
+    private var patternOverlay: CaptureOverlay? = null
+    private var pendingRecordSlot: Int? = null
+    private var recordingSlot: Int? = null
+    private var recorded = mutableListOf<TapPatternStore.Point>()
+    private var previousGridVisible = false
+    private var replaying = false
+    private var replayGeneration = 0
+    private var recordStart: Runnable? = null
 
     private fun reportOnOverlay(message: String) {
         ui.post {
@@ -184,6 +200,188 @@ class AtenaAccessibilityService : AccessibilityService() {
         } else "Android rechazó el toque. Comprueba el permiso de accesibilidad."
     }
 
+    /** Da seis segundos para salir de ATENA y abrir la pantalla que se desea grabar. */
+    private fun prepareRecording(slot: Int): String {
+        if (slot !in 1..3) return "Solo hay patrones 1, 2 y 3."
+        if (recordingSlot != null || pendingRecordSlot != null || replaying)
+            return "Termina la operación anterior antes de grabar otro patrón."
+        previousGridVisible = gridVisible
+        hideGridInternal()
+        pendingRecordSlot = slot
+        recorded.clear()
+        val start = Runnable { startRecordingNow(slot) }
+        recordStart = start
+        ui.postDelayed(start, 6000)
+        val message = "Patrón $slot: tienes 6 segundos para abrir la pantalla destino. Luego toca hasta 8 puntos. La franja superior tendrá GUARDAR y CANCELAR."
+        broadcast(message)
+        return message
+    }
+
+    private fun startRecordingNow(slot: Int) {
+        if (pendingRecordSlot != slot) return
+        pendingRecordSlot = null
+        recordStart = null
+        recordingSlot = slot
+        val view = CaptureOverlay()
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        try {
+            windows.addView(view, params)
+            patternOverlay = view
+            broadcast("GRABANDO PATRÓN $slot: toca hasta 8 posiciones; arriba GUARDAR/CANCELAR. Estos toques no ejecutan acciones mientras grabas.")
+        } catch (e: Exception) {
+            recordingSlot = null
+            broadcast("No se pudo abrir la pantalla de grabación: ${e.message}")
+            restoreGridAfterRecording()
+        }
+    }
+
+    private fun finishRecording(save: Boolean): String {
+        val slot = recordingSlot ?: return "No hay patrón en grabación."
+        recordingSlot = null
+        patternOverlay?.let { try { windows.removeView(it) } catch (_: Exception) {} }
+        patternOverlay = null
+        val result = if (save && recorded.isNotEmpty()) {
+            try {
+                TapPatternStore.save(this, slot,
+                    TapPatternStore.Pattern(resources.configuration.orientation, recorded.toList()))
+                "PATRÓN $slot GUARDADO: ${recorded.size} toque(s)."
+            } catch (e: Exception) { "No se pudo guardar patrón: ${e.message}" }
+        } else if (save) {
+            "No grabaste ninguna posición. No se reemplazó el patrón anterior."
+        } else "Grabación del patrón $slot cancelada."
+        recorded.clear()
+        restoreGridAfterRecording()
+        broadcast(result)
+        return result
+    }
+
+    private fun restoreGridAfterRecording() {
+        if (previousGridVisible) showGridInternal()
+        previousGridVisible = false
+    }
+
+    private fun deleteSavedPattern(slot: Int): String {
+        if (slot !in 1..3) return "Patrón no válido."
+        if (replaying || recordingSlot != null || pendingRecordSlot != null)
+            return "Espera a terminar la operación actual."
+        TapPatternStore.delete(this, slot)
+        return "Patrón $slot borrado."
+    }
+
+    /** Al reproducir desde el menú hay seis segundos para volver a la pantalla destino. */
+    private fun playSavedPattern(slot: Int, delayed: Boolean): String {
+        if (slot !in 1..3) return "Patrón no válido."
+        if (replaying || recordingSlot != null || pendingRecordSlot != null)
+            return "ATENA está grabando o ejecutando otro patrón."
+        val pattern = TapPatternStore.load(this, slot) ?: return "El patrón $slot todavía no está guardado."
+        if (pattern.orientation != resources.configuration.orientation)
+            return "La orientación cambió. Vuelve a la orientación en que grabaste el patrón $slot."
+        replaying = true
+        val run = ++replayGeneration
+        val delay = if (delayed) 6000L else 300L
+        ui.postDelayed({ if (replaying && replayGeneration == run) playNextPoint(slot, pattern.points, 0, run) }, delay)
+        return if (delayed) "Patrón $slot: inicia en 6 segundos; abre la pantalla destino."
+            else "Ejecutando patrón $slot con ${pattern.points.size} toque(s)."
+    }
+
+    private fun playNextPoint(slot: Int, points: List<TapPatternStore.Point>, index: Int, run: Int) {
+        if (!replaying || replayGeneration != run) return
+        if (index == points.size) {
+            replaying = false
+            broadcast("PATRÓN $slot TERMINADO: ${points.size} toque(s) completados.")
+            return
+        }
+        val bounds = windows.currentWindowMetrics.bounds
+        val point = points[index]
+        val x = bounds.left + point.x * bounds.width()
+        val y = bounds.top + point.y * bounds.height()
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder().addStroke(
+            GestureDescription.StrokeDescription(path, 0, 95)
+        ).build()
+        val accepted = try {
+            dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    ui.postDelayed({ playNextPoint(slot, points, index + 1, run) }, 600L)
+                }
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    replaying = false
+                    broadcast("Android canceló el toque ${index + 1} del patrón $slot.")
+                }
+            }, null)
+        } catch (e: Exception) {
+            replaying = false
+            broadcast("Error ejecutando patrón $slot: ${e.message}")
+            false
+        }
+        if (!accepted && replaying) {
+            replaying = false
+            broadcast("Android rechazó el toque ${index + 1} del patrón $slot.")
+        }
+    }
+
+    /** Capa temporal táctil: graba coordenadas, no hace clic durante la captura. */
+    private inner class CaptureOverlay : View(this@AtenaAccessibilityService) {
+        private val background = Paint().apply { color = Color.argb(34, 0, 150, 240) }
+        private val top = Paint().apply { color = Color.argb(245, 10, 29, 50) }
+        private val font = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textSize = 14f * resources.displayMetrics.scaledDensity
+            textAlign = Paint.Align.CENTER
+        }
+        private val mark = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.YELLOW
+            style = Paint.Style.STROKE
+            strokeWidth = 3f * resources.displayMetrics.density
+        }
+        private val barHeight get() = 82f * resources.displayMetrics.density
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), background)
+            canvas.drawRect(0f, 0f, width.toFloat(), barHeight, top)
+            val y = 29f * resources.displayMetrics.density
+            canvas.drawText("CANCELAR", width * 0.25f, y, font)
+            canvas.drawText("GUARDAR", width * 0.75f, y, font)
+            canvas.drawText("Patrón ${recordingSlot ?: '-'}: ${recorded.size}/8 toques (debajo de esta barra)",
+                width * 0.5f, 62f * resources.displayMetrics.density, font)
+            val bounds = windows.currentWindowMetrics.bounds
+            for (pt in recorded) {
+                val xx = bounds.left + pt.x * bounds.width()
+                val yy = bounds.top + pt.y * bounds.height()
+                canvas.drawCircle(xx, yy, 13f * resources.displayMetrics.density, mark)
+            }
+        }
+        override fun onTouchEvent(event: MotionEvent): Boolean {
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> return true
+                MotionEvent.ACTION_UP -> {
+                    if (event.y < barHeight) {
+                        finishRecording(event.x >= width / 2f)
+                    } else if (recorded.size < TapPatternStore.MAX_STEPS) {
+                        val bounds = windows.currentWindowMetrics.bounds
+                        val px = ((event.rawX - bounds.left) / bounds.width().toFloat()).coerceIn(0f, 1f)
+                        val py = ((event.rawY - bounds.top) / bounds.height().toFloat()).coerceIn(0f, 1f)
+                        recorded.add(TapPatternStore.Point(px, py))
+                        broadcast("PATRÓN ${recordingSlot ?: '-'}: toque ${recorded.size} de 8 registrado.")
+                        invalidate()
+                    } else {
+                        broadcast("Límite de 8 toques alcanzado; pulsa GUARDAR arriba.")
+                    }
+                    return true
+                }
+                else -> return true
+            }
+        }
+    }
+
     private inner class GridOverlay : View(this@AtenaAccessibilityService) {
         private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(44, 175, 245)
@@ -282,6 +480,14 @@ class AtenaAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
     override fun onDestroy() {
+        recordStart?.let { ui.removeCallbacks(it) }
+        recordStart = null
+        pendingRecordSlot = null
+        recordingSlot = null
+        patternOverlay?.let { try { windows.removeView(it) } catch (_: Exception) {} }
+        patternOverlay = null
+        replaying = false
+        ++replayGeneration
         hideGridInternal()
         if (current.get() === this) current.clear()
         super.onDestroy()

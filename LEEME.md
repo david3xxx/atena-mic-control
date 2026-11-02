@@ -1,25 +1,25 @@
-# ATENA V0.9 — barra de sonido y diagnóstico de entrada
+# ATENA V1.0 — 3 patrones de pulsación y comandos de voz
 
-## Qué cambia
+Actualización del proyecto V0.9; conserva cuadrícula 4×4 de dos niveles, prueba de casilla 16, barra de sonido y modos de micrófono.
 
-- El **menú principal** ahora tiene una **barra horizontal de nivel de sonido** (0 a 100), con indicación de fuente y un botón **PROBAR MICRÓFONO · VER BARRA**.
-- La prueba abre `AudioRecord` para la entrada seleccionada, compara la ruta real (`routedDevice`) y calcula el nivel RMS localmente. **No guarda archivos de audio** y no ejecuta acciones de pantalla en este modo.
-- La barra se actualiza también durante el modo de voz compatible si el reconocedor de Android informa niveles RMS, y en modo avanzado desde el audio PCM capturado. **Una barra móvil no significa que se hayan reconocido palabras.**
-- Conserva el menú y el diagnóstico de **casilla 16 → subcasilla 16**. Los comandos de voz son palabras en español (uno a dieciséis).
+## ¿Qué añade V1.0?
 
-## Prueba recomendada
+- Tres ranuras independientes: **patrón uno**, **patrón dos**, **patrón tres**.
+- Cada patrón almacena de 1 a 8 puntos en el orden tocado; solamente coordenadas normalizadas y orientación, no fotografías, texto ni contraseñas.
+- En ATENA, pulsa **GRABAR PATRÓN 1**. Tienes **6 segundos** para abrir la pantalla de la otra aplicación. Cuando aparezca la capa azul, toca las posiciones que quieres memorizar, en orden. Esos toques se **registran, pero NO se ejecutan** durante la grabación. En la franja superior elige **GUARDAR** o **CANCELAR**.
+- Para probar sin voz, toca **PROBAR PATRÓN 1 – EJECUTAR EN 6 s**, navega a la pantalla destino y espera.
+- Para voz, inicia **ESCUCHA – MODO COMPATIBLE** y di exactamente **«patrón uno»**, **«patrón dos»** o **«patrón tres»**. También acepta «ejecutar patrón uno», «patrón 1» etc. El reconocimiento Android de voz sigue siendo una limitación de esta versión.
+- Cada pulsación se envía secuencialmente mediante AccessibilityService.dispatchGesture, con ~600ms entre pulsaciones.
+- Comprueba que el servicio ATENA esté activado en Ajustes > Accesibilidad. Android puede restringir la activación en APK instaladas fuera de Play Store; no desactives Play Protect para ello.
 
-1. Abre ATENA; concede el permiso de micrófono. Desactiva temporalmente Voice Access de Google para que no compita por el micrófono.
-2. Para descartar problemas con los audífonos, selecciona primero el **micrófono del teléfono** y pulsa **PROBAR MICRÓFONO · VER BARRA**. Habla: el nivel debe moverse. Pulsa **DETENER PRUEBA DE SONIDO**.
-3. Selecciona el micrófono **Bluetooth/cable**; prueba de nuevo. Si Android usa otro micrófono, ATENA mostrará **RUTA INCORRECTA** y detendrá la captura.
-4. Si la barra funciona pero los comandos no, pulsa **INICIAR ESCUCHA · MODO COMPATIBLE** y revisa los mensajes «ESCUCHANDO», «RECONOCIMIENTO PARCIAL», «RESULTADO FINAL» y errores. El reconocedor Android puede no informar RMS.
-5. Una vez que el motor reconozca «dieciséis», di otra vez «dieciséis» para solicitar la pulsación. Para distinguir accesibilidad de voz, también hay botones manuales 16 → 16.
+## Precauciones
 
-**Importante:** La barra de prueba confirma energía en el `AudioRecord` seleccionado, NO que el reconocimiento de palabras use ese mismo audio. En modo compatible la fuente real no puede garantizarse; en modo avanzado ciertos motores ignoran `EXTRA_AUDIO_SOURCE`.
+- Las coordenadas son específicas de pantalla/posición: cuando una app cambia de diseño, el mismo patrón puede tocar otro lugar.
+- Se rechaza reproducir si cambió la orientación, pero **no** es posible garantizar que la pantalla o el contenido sea el mismo.
+- No grabes ni reproduzcas sobre contraseñas, compras, transferencias, permisos u operaciones irreversibles.
+- Un comando de voz solo funciona si el reconocimiento realmente identifica esa frase. Para reconocer comandos por el micrófono de auriculares, Android puede requerir un motor de reconocimiento compatible con PCM externo; **no está garantizado**.
+- La capa de grabación bloquea los toques reales mientras está activa. Los controles CANCELAR y GUARDAR están en la parte superior. Una vez cerrada puedes volver a utilizar la pantalla.
 
-## Compilación e instalación
+## Instalación
 
-- Subir **el contenido de esta carpeta** a la raíz de `david3xxx/atena-mic-control` en GitHub, sobreescribiendo archivos antiguos. Mantener `.github/workflows/build-apk.yml`.
-- GitHub Actions compilará el APK. Artifact: **ATENA-V0-9-BARRA-AUDIO-APK**.
-- `applicationId=pe.atena.miccontrol`, `versionCode=9`. Al usarse claves de depuración efímeras, es posible que debas desinstalar la versión anterior si Android reporta conflicto de firma.
-- Es una aplicación experimental que solicita permisos sensibles; no desactives las protecciones del teléfono para forzar su instalación.
+Subir **el contenido de esta carpeta** a `david3xxx/atena-mic-control` en la rama `main`, aceptando reemplazar archivos. GitHub Actions ejecuta tests y construye `app-debug.apk`. La descarga del artefacto tiene el nombre histórico `ATENA-MIC-v0-6-APK`, pero `versionName` debe ser `1.0-patrones`. No hay APK compilado dentro de este ZIP. Para instalar como actualización debes mantener el mismo `applicationId` y firma de depuración; si el firmante difiere, Android solicitará desinstalar la anterior.
