@@ -1,0 +1,3 @@
+<resources>
+    <string name="accessibility_description">Permite ejecutar inicio, atrás, notificaciones y desplazamiento únicamente mediante comandos de voz reconocidos por ATENA. Debes activarlo manualmente.</string>
+</resources>
