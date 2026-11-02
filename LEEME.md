@@ -1,36 +1,37 @@
-# ATENA Cuadrícula V0.7 — Selector de micrófono y pulsación por voz
+# ATENA V0.8 – prueba de casilla 16 (Android)
 
-**Proyecto Android nuevo e independiente de Google Voice Access.** No modifica su APK, su firma ni el micrófono utilizado por Voice Access.
+## Novedades
 
-## Funcionamiento solicitado
+- **Prueba por botones:** `CASILLA 16 · AMPLIAR` y `SUBCASILLA 16 · TOCAR` permiten verificar las pulsaciones sin depender de la voz.
+- **Cuadrícula de precisión:** 4 × 4 en dos niveles; «dieciséis» abre la casilla 16, luego «dieciséis» pulsa el centro de la subcasilla 16.
+- **Español (Perú):** reconoce textos finales del 1 al 16 escritos en palabras o cifras, incluso «dieciséis» / «diez y seis».
+- **Diagnóstico visible:** banner sobre la cuadrícula (escuchando, resultado parcial/final, error, gesto aceptado/cancelado), historial en la aplicación y círculo amarillo en el punto solicitado.
+- **Dos modos de reconocimiento:**
+  1. **Compatible:** usa `SpeechRecognizer` normal de Android y evita el uso simultáneo de `AudioRecord`; es el mejor primer diagnóstico. Android decide el micrófono real. Solicitar la ruta Bluetooth no garantiza que el reconocedor la respete.
+  2. **Micrófono elegido (experimental):** captura PCM con `AudioRecord`, comprueba `routedDevice` y envía el audio por `RecognizerIntent.EXTRA_AUDIO_SOURCE`. Algunos reconocedores ignoran esta fuente o no la soportan; un mensaje de ruta confirmada no garantiza la ruta del reconocimiento.
 
-- Al activar manualmente el servicio **ATENA control por voz** en Accesibilidad, aparece de inmediato una cuadrícula de **4 × 4 (16 casillas)** sobre la pantalla, incluso al cambiar de aplicaciones.
-- Di **«12»**: la casilla 12 se divide en **otras 16 subcasillas**, sin tocar todavía la pantalla.
-- Di **«5»**: ATENA solicita una pulsación en el centro de la subcasilla 5 dentro de la casilla 12, y regresa a la cuadrícula principal.
-- También acepta «casilla doce», «número cinco», «mostrar cuadrícula», «ocultar cuadrícula», «reiniciar cuadrícula», «volver cuadrícula».
-- No lee, copia ni transmite el contenido de la pantalla. El overlay es no interactivo al tacto; las pulsaciones dependen del servicio de accesibilidad activado voluntariamente.
-- La pantalla debe estar encendida y desbloqueada para operar la cuadrícula.
+## Prueba de la casilla 16 en un Samsung
 
-## Comprobar sin depender del micrófono
+1. Instalar ATENA V0.8 desde el APK generado por GitHub Actions. No es necesario instalar ningún parche manualmente.
+2. Abrir ATENA y activar voluntariamente **ATENA control por voz** en Accesibilidad. Esta capacidad puede controlar otras aplicaciones y es un permiso sensible.
+3. Pulsar **MOSTRAR CUADRÍCULA**, **1. CASILLA 16 · AMPLIAR**, **2. SUBCASILLA 16 · TOCAR**. Comprobar el banner de confirmación/cancelación y el círculo amarillo. Una pulsación puede no producir cambios visibles si no hay controles en ese punto.
+4. Conectar auriculares; desactivar Google Voice Access durante la prueba para evitar competencia por el micrófono.
+5. Pulsar **ACTUALIZAR MICRÓFONOS**, seleccionar el dispositivo y luego **INICIAR ESCUCHA · MODO COMPATIBLE**. Decir «dieciséis», esperar la cuadrícula más pequeña, decir otra vez «dieciséis».
+6. Si el modo compatible reconoce comandos, probar **INICIAR ESCUCHA · MICRÓFONO ELEGIDO (EXPERIMENTAL)**. Revisar el diagnóstico: la ruta `AudioRecord` comprobada y el resultado del reconocedor son hechos distintos.
+7. **DETENER ESCUCHA** al terminar y desactivar el servicio de accesibilidad si no se necesita.
 
-1. Instala el APK que se genere desde este proyecto.
-2. En **Ajustes → Accesibilidad**, activa voluntariamente **ATENA control por voz** si confías en la aplicación y entiendes sus permisos; Android puede mostrar «configuración restringida» con APK instalados fuera de Play Store. No es necesario desactivar Play Protect para desarrollar o compilar el proyecto.
-3. Aparecerá la cuadrícula principal. Si no, abre la app y pulsa **MOSTRAR CUADRÍCULA**.
-4. Pulsa **PROBAR CASILLA 12 · AMPLIAR**. Observa cómo la casilla 12 se subdivide.
-5. Pulsa **PROBAR SUBCASILLA 5 · TOCAR**. Android intentará pulsar esa región.
-6. Pulsa **REINICIAR CUADRÍCULA** o **OCULTAR CUADRÍCULA** cuando lo necesites.
+## Instalación / firma
 
-## Probar con auriculares
-
-1. Desactiva temporalmente Google Voice Access para evitar competencia por el micrófono.
-2. Conecta los auriculares. Abre ATENA, concede el permiso de micrófono y dispositivos cercanos si corresponde.
-3. Pulsa **ACTUALIZAR MICRÓFONOS**, selecciona la entrada deseada y **INICIAR ESCUCHA CON MICRÓFONO ELEGIDO**.
-4. Di «12» y luego «5» en **dos turnos distintos**. Los comandos «inicio», «atrás», «subir», «bajar» y «abrir ChatGPT» de V0.6 siguen presentes.
-
-**Limitación importante:** `AudioRecord.setPreferredDevice()` comprueba por qué entrada captura ATENA, pero el motor de `SpeechRecognizer` de Android **puede ignorar** el audio externo suministrado. Por ello la ruta de voz completa por auriculares no está garantizada. Las escuchas pueden reiniciarse y producir sonidos del sistema. Las pruebas con botones permiten validar la cuadrícula independientemente de ese problema.
+La versión usa el mismo `applicationId` (`pe.atena.miccontrol`) y `versionCode = 8`. Los APK de depuración de diferentes ejecutores de GitHub Actions pueden estar firmados con claves distintas. En caso de conflicto de firma, desinstalar ATENA V0.7 antes de instalar V0.8 (no se almacenan cuentas ni grabaciones en el proyecto).
 
 ## Compilar en GitHub
 
-Usa un repositorio nuevo `atena-cuadricula`, o reemplaza los archivos del repositorio `atena-mic-control` (incluidos el código fuente y `.github/workflows/build-apk.yml`, manteniendo copia de la V0.6). En **Actions → Compilar ATENA CUADRICULA v0.7**, ejecuta el flujo. Si pasa pruebas, descarga **ATENA-CUADRICULA-v0-7-APK** y extrae `app-debug.apk`.
+Subir el contenido de esta carpeta directamente a la raíz de `david3xxx/atena-mic-control` (no subir la carpeta como un nivel extra). El flujo `.github/workflows/build-apk.yml` ejecutará `:app:testDebugUnitTest` y `:app:assembleDebug` automáticamente y publicará el artifact **ATENA-V0-8-APK**. GitHub Actions debe finalizar en verde antes de considerar el APK compilado.
 
-**Estado:** código fuente y pruebas preparados; todavía debe compilarse con Android SDK y verificarse en un Samsung. No es una aplicación oficial de Google ni está conectada a ChatGPT para formular respuestas.
+## Limitaciones y seguridad
+
+- Este proyecto **no modifica Google Voice Access**.
+- Es una aplicación experimental de accesibilidad, no auditada ni publicada en Google Play.
+- No es un reconocimiento plenamente continuo ni garantiza funcionar con pantalla apagada.
+- La prueba de voz no demuestra por sí sola que la captura provenga de auriculares Bluetooth. No desactivar Play Protect para forzar la instalación ante una alerta de aplicación dañina.
+- No se graban archivos de voz ni se transmite audio a servidores propios. El motor de reconocimiento de Android puede necesitar conectividad según su implementación.

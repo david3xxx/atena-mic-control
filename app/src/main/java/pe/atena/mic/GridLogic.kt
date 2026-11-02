@@ -45,7 +45,7 @@ object GridSpeech {
             "cinco" to 5, "seis" to 6, "siete" to 7, "ocho" to 8,
             "nueve" to 9, "diez" to 10, "once" to 11, "doce" to 12,
             "trece" to 13, "catorce" to 14, "quince" to 15,
-            "dieciseis" to 16
+            "dieciseis" to 16, "diez y seis" to 16
         )
         return (words[candidate] ?: candidate.toIntOrNull())?.takeIf { it in 1..16 }
     }

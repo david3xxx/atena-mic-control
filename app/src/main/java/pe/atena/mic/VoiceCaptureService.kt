@@ -38,6 +38,9 @@ class VoiceCaptureService : Service() {
         const val ACTION_STATUS = "pe.atena.mic.STATUS"
         const val EXTRA_INPUT_ID = "input_id"
         const val EXTRA_MESSAGE = "message"
+        const val EXTRA_MODE = "mode"
+        const val MODE_COMPATIBLE = "compatible"
+        const val MODE_ROUTED = "routed"
         private const val CHANNEL = "atena_mic_capture_v06"
         private const val NOTIFICATION_ID = 71
         private const val SAMPLE_RATE = 16000
@@ -52,6 +55,7 @@ class VoiceCaptureService : Service() {
     private var captureThread: Thread? = null
     private var active = false
     private var selectedId = -1
+    private var mode = MODE_COMPATIBLE
     private var generation = 0
     private var errors = 0
     private var adjustedAudioMode = false
@@ -102,6 +106,9 @@ class VoiceCaptureService : Service() {
                 }
                 stopCaptureOnly()
                 selectedId = intent.getIntExtra(EXTRA_INPUT_ID, -1)
+                mode = intent.getStringExtra(EXTRA_MODE)?.takeIf {
+                    it == MODE_ROUTED
+                } ?: MODE_COMPATIBLE
                 active = true
                 errors = 0
                 try {
@@ -122,6 +129,7 @@ class VoiceCaptureService : Service() {
     }
 
     private fun publish(message: String) {
+        AtenaAccessibilityService.showVoiceState(message)
         sendBroadcast(Intent(ACTION_STATUS).apply {
             setPackage(packageName)
             putExtra(EXTRA_MESSAGE, message)
@@ -166,12 +174,17 @@ class VoiceCaptureService : Service() {
             stopWithMessage("No hay motor SpeechRecognizer disponible en Android.")
             return
         }
+        if (mode == MODE_COMPATIBLE) {
+            startCompatibleRecognition()
+            return
+        }
         val target = chosenInput()
         if (target == null) {
             stopWithMessage("El micrófono elegido ya no está conectado. Vuelve a seleccionarlo.")
             return
         }
         try {
+            publish("MODO AVANZADO: validando micrófono elegido y audio externo PCM.")
             configureBluetooth(target)
             val minSize = AudioRecord.getMinBufferSize(
                 SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -209,12 +222,22 @@ class VoiceCaptureService : Service() {
             val recognition = SpeechRecognizer.createSpeechRecognizer(this)
             recognizer = recognition
             recognition.setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {}
-                override fun onBeginningOfSpeech() {}
+                override fun onReadyForSpeech(params: Bundle?) {
+                    if (session == generation && active) publish("RECONOCEDOR LISTO. Di 'dieciséis'. (Modo avanzado)")
+                }
+                override fun onBeginningOfSpeech() {
+                    if (session == generation && active) publish("El motor detectó voz (no garantiza que sea del micrófono elegido).")
+                }
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
-                override fun onPartialResults(partialResults: Bundle?) {}
+                override fun onPartialResults(partialResults: Bundle?) {
+                    if (session != generation || !active) return
+                    partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()?.takeIf { it.isNotBlank() }?.let {
+                            publish("Reconocimiento parcial: '$it'")
+                        }
+                }
                 override fun onEvent(eventType: Int, params: Bundle?) {}
                 override fun onError(error: Int) {
                     if (session != generation || !active) return
@@ -238,6 +261,7 @@ class VoiceCaptureService : Service() {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-PE")
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                 putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pipeRead)
                 putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
                 putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
@@ -248,6 +272,74 @@ class VoiceCaptureService : Service() {
             handler.postDelayed(watchdog, 15500)
         } catch (ex: Exception) {
             stopWithMessage("No se logró utilizar ese micrófono: ${ex.message}")
+        }
+    }
+
+    /**
+     * Usa el SpeechRecognizer normal de Android. Evita competir con el motor de voz
+     * mediante AudioRecord + un segundo micrófono. NO certifica micrófono Bluetooth;
+     * es una prueba de compatibilidad y ejecución de comandos.
+     */
+    private fun startCompatibleRecognition() {
+        try {
+            val chosen = chosenInput()
+            if (chosen != null) {
+                configureBluetooth(chosen)
+                publish("MODO COMPATIBLE: Android decide la fuente final de la voz. Entrada solicitada: ${chosen.productName}.")
+            } else {
+                publish("MODO COMPATIBLE: dispositivo elegido ausente, Android usará la entrada disponible.")
+            }
+            val session = ++generation
+            val speech = SpeechRecognizer.createSpeechRecognizer(this)
+            recognizer = speech
+            speech.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    if (session == generation && active) publish("ESCUCHANDO: di 'dieciséis'. (Modo compatible)")
+                }
+                override fun onBeginningOfSpeech() {
+                    if (session == generation && active) publish("VOZ DETECTADA por el reconocedor de Android.")
+                }
+                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onBufferReceived(buffer: ByteArray?) {}
+                override fun onEndOfSpeech() {
+                    if (session == generation && active) publish("Procesando lo que dijiste...")
+                }
+                override fun onPartialResults(partials: Bundle?) {
+                    if (session != generation || !active) return
+                    partials?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull()?.takeIf { it.isNotBlank() }?.let {
+                            publish("Reconocimiento parcial: '$it' (esperando confirmación)")
+                        }
+                }
+                override fun onEvent(eventType: Int, params: Bundle?) {}
+                override fun onError(error: Int) {
+                    if (session != generation || !active) return
+                    errors++
+                    if (errors >= 5) {
+                        stopWithMessage("Motor de voz falló 5 veces (código $error). Prueba permisos, voz de Google y desactiva Voice Access.")
+                    } else {
+                        publish("Motor de voz: error $error, reintento $errors/5.")
+                        scheduleNext(1500)
+                    }
+                }
+                override fun onResults(results: Bundle?) {
+                    if (session != generation || !active) return
+                    errors = 0
+                    val heard = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull().orEmpty()
+                    handleCommand(heard)
+                }
+            })
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-PE")
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            }
+            speech.startListening(intent)
+            handler.postDelayed(watchdog, 16000)
+        } catch (ex: Exception) {
+            stopWithMessage("Modo compatible no pudo comenzar: ${ex.message}")
         }
     }
 
@@ -278,7 +370,7 @@ class VoiceCaptureService : Service() {
                                 routeVerified = true
                                 handler.post {
                                     if (active && generation == session) {
-                                        publish("RUTA REAL CONFIRMADA: ${route.productName} (ID ${route.id}). Escuchando órdenes... El motor de reconocimiento podría ignorar el audio inyectado.")
+                                        publish("CAPTURA PCM CONFIRMADA: ${route.productName} (ID ${route.id}). El reconocedor podría ignorar esta captura.")
                                     }
                                 }
                             } else if (SystemClock.elapsedRealtime() - started > 1700) {
@@ -323,10 +415,16 @@ class VoiceCaptureService : Service() {
     }
 
     private fun handleCommand(heard: String) {
+        publish("RESULTADO FINAL: '${heard.ifBlank { "(sin palabras)" }}'")
         val number = GridSpeech.number(heard)
-        if (number != null && AtenaAccessibilityService.isGridVisible()) {
-            publish(AtenaAccessibilityService.selectCell(number))
-            scheduleNext(650)
+        if (number != null) {
+            publish("NÚMERO RECONOCIDO: $number")
+            publish(if (AtenaAccessibilityService.isGridVisible()) {
+                AtenaAccessibilityService.selectCell(number)
+            } else {
+                "Oí '$heard' pero la cuadrícula no está activada en Accesibilidad."
+            })
+            scheduleNext(700)
             return
         }
         val action = CommandRouter.action(heard)

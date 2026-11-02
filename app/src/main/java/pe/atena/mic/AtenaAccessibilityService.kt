@@ -6,11 +6,14 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.PointF
 import android.graphics.PixelFormat
 import android.graphics.RectF
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.os.Handler
+import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
 import java.lang.ref.WeakReference
 
@@ -32,6 +35,11 @@ class AtenaAccessibilityService : AccessibilityService() {
         fun selectCell(number: Int): String = current.get()?.selectCellInternal(number)
             ?: "Activa ATENA en Accesibilidad para seleccionar casillas."
 
+        /** La cuadrícula muestra el estado también cuando ATENA está encima de otra app. */
+        fun showVoiceState(message: String) {
+            current.get()?.reportOnOverlay(message)
+        }
+
         fun perform(action: CommandRouter.Action): Boolean {
             val service = current.get() ?: return false
             return when (action) {
@@ -49,6 +57,16 @@ class AtenaAccessibilityService : AccessibilityService() {
     private var overlay: GridOverlay? = null
     private var gridVisible = false
     private var firstCell: Int? = null
+    private val ui = Handler(Looper.getMainLooper())
+    private var overlayMessage = "Inicia la escucha desde ATENA"
+    private var lastTarget: PointF? = null
+
+    private fun reportOnOverlay(message: String) {
+        ui.post {
+            overlayMessage = message.take(80)
+            overlay?.invalidate()
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -67,6 +85,7 @@ class AtenaAccessibilityService : AccessibilityService() {
     private fun showGridInternal(): String {
         gridVisible = true
         firstCell = null
+        lastTarget = null
         if (overlay == null) {
             val view = GridOverlay()
             val params = WindowManager.LayoutParams(
@@ -86,13 +105,15 @@ class AtenaAccessibilityService : AccessibilityService() {
                 return "No se pudo mostrar cuadrícula: ${ex.message}"
             }
         }
+        reportOnOverlay("Cuadrícula lista. Inicia la escucha en ATENA.")
         overlay?.invalidate()
-        return "Cuadrícula visible: di un número del 1 al 16."
+        return "Cuadrícula visible. Para hablar, inicia la escucha en ATENA."
     }
 
     private fun hideGridInternal(): String {
         gridVisible = false
         firstCell = null
+        lastTarget = null
         overlay?.let { try { windows.removeView(it) } catch (_: Exception) {} }
         overlay = null
         return "Cuadrícula oculta. Di 'mostrar cuadrícula' para abrirla."
@@ -101,6 +122,8 @@ class AtenaAccessibilityService : AccessibilityService() {
     private fun restartGridInternal(): String {
         if (!gridVisible) return showGridInternal()
         firstCell = null
+        lastTarget = null
+        reportOnOverlay("Cuadrícula reiniciada · di del uno al dieciséis")
         overlay?.invalidate()
         return "Cuadrícula principal: elige del 1 al 16."
     }
@@ -120,7 +143,9 @@ class AtenaAccessibilityService : AccessibilityService() {
 
         val first = firstCell
         if (first == null) {
+            lastTarget = null
             firstCell = number
+            reportOnOverlay("Casilla $number ampliada. Di otro número.")
             view.invalidate()
             return "Casilla $number ampliada. Di otro número del 1 al 16 para tocar."
         }
@@ -130,6 +155,8 @@ class AtenaAccessibilityService : AccessibilityService() {
         val x = target.centerX
         val y = target.centerY
         firstCell = null
+        lastTarget = PointF(x, y)
+        reportOnOverlay("Solicitando toque $first → $number")
         view.invalidate()
 
         val path = Path().apply { moveTo(x, y) }
@@ -139,10 +166,14 @@ class AtenaAccessibilityService : AccessibilityService() {
         val accepted = try {
             dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
-                    broadcast("Toque confirmado: casilla $first, subcasilla $number.")
+                    val message = "PULSACIÓN COMPLETADA: $first → $number"
+                    broadcast(message)
+                    reportOnOverlay(message)
                 }
                 override fun onCancelled(gestureDescription: GestureDescription?) {
-                    broadcast("Android canceló el toque. Intenta nuevamente.")
+                    val message = "ANDROID CANCELÓ LA PULSACIÓN $first → $number"
+                    broadcast(message)
+                    reportOnOverlay(message)
                 }
             }, null)
         } catch (ex: Exception) {
@@ -172,6 +203,17 @@ class AtenaAccessibilityService : AccessibilityService() {
         }
         private val dim = Paint().apply { color = Color.argb(40, 0, 0, 0) }
         private val highlighted = Paint().apply { color = Color.argb(42, 0, 160, 255) }
+        private val targetPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(255, 204, 0)
+            style = Paint.Style.STROKE
+            strokeWidth = 4f * resources.displayMetrics.density
+        }
+        private val bannerText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            textSize = 13f * resources.displayMetrics.scaledDensity
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        private val bannerBackground = Paint().apply { color = Color.argb(230, 9, 32, 51) }
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -188,6 +230,17 @@ class AtenaAccessibilityService : AccessibilityService() {
                 canvas.drawRect(zoom.left, zoom.top, zoom.right, zoom.bottom, bigStroke)
                 drawCells(canvas, zoom, true)
             }
+            // El último punto permanece marcado para distinguir un toque real de
+            // una zona donde no existe ningún control pulsable debajo.
+            lastTarget?.let {
+                canvas.drawCircle(it.x, it.y, 13f * resources.displayMetrics.density, targetPaint)
+            }
+            val density = resources.displayMetrics.density
+            val bannerHeight = 37f * density
+            canvas.drawRect(0f, 0f, width.toFloat(), bannerHeight, bannerBackground)
+            val maxLength = ((width / (8f * density)).toInt()).coerceAtLeast(15)
+            val message = overlayMessage.replace('\n', ' ').take(maxLength)
+            canvas.drawText(message, 9f * density, 23f * density, bannerText)
         }
 
         private fun drawCells(canvas: Canvas, area: GridLogic.Area, compact: Boolean) {

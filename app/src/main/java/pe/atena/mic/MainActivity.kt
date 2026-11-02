@@ -9,10 +9,8 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.view.View
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.LinearLayout
@@ -20,69 +18,72 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 
-/** Selector explícito de entrada. No cambia el micrófono de Google Voice Access. */
+/** V0.8: primero prueba de casilla 16, después reconocimiento y ruta de audio. */
 class MainActivity : Activity() {
     private lateinit var inputSpinner: Spinner
     private lateinit var status: TextView
     private var inputs = emptyList<AudioDeviceInfo>()
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val message = intent?.getStringExtra(VoiceCaptureService.EXTRA_MESSAGE).orEmpty()
-            if (message.isNotEmpty()) status.text = message
+            intent?.getStringExtra(VoiceCaptureService.EXTRA_MESSAGE)?.let { this@MainActivity.report(it) }
         }
+    }
+
+    private fun report(message: String) {
+        // Conservar los últimos diagnósticos permite leerlos al volver de otra aplicación.
+        status.text = ("• $message\n" + status.text.toString()).take(3500)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val root = ScrollView(this)
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(30, 36, 30, 36)
+            setPadding(28, 28, 28, 28)
         }
-        fun text(value: String, heading: Boolean = false) {
+        fun addText(value: String, large: Boolean = false) {
             column.addView(TextView(this).apply {
-                this.text = value
-                textSize = if (heading) 24f else 16f
-                setPadding(0, 10, 0, 10)
+                text = value
+                textSize = if (large) 23f else 16f
+                setPadding(0, 8, 0, 8)
             })
         }
-        fun button(value: String, cb: () -> Unit) {
-            column.addView(Button(this).apply { text = value; setOnClickListener { cb() } })
+        fun addButton(value: String, onTap: () -> Unit) {
+            column.addView(Button(this).apply { text = value; setOnClickListener { onTap() } })
         }
+        addText("ATENA V0.8 · CASILLA DIECISÉIS", true)
+        addText("El objetivo es: decir 'dieciséis' → ampliar la casilla 16 → decir 'dieciséis' → pulsar su subcasilla 16. Los números se dicen en español, del uno al dieciséis.")
+        addText("PASO 1 · Activar el servicio de accesibilidad de ATENA. Este permiso permite pulsaciones en pantalla; actívalo únicamente si confías en la aplicación.")
+        addButton("ABRIR ACCESIBILIDAD") {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        addText("PASO 2 · Probar las pulsaciones SIN usar la voz. Esto distingue los errores de accesibilidad de los del micrófono.")
+        addButton("MOSTRAR CUADRÍCULA") { report(AtenaAccessibilityService.showGrid()) }
+        addButton("1. CASILLA 16 · AMPLIAR") { report(AtenaAccessibilityService.selectCell(16)) }
+        addButton("2. SUBCASILLA 16 · TOCAR") { report(AtenaAccessibilityService.selectCell(16)) }
+        addButton("REINICIAR CUADRÍCULA") { report(AtenaAccessibilityService.restartGrid()) }
+        addButton("OCULTAR CUADRÍCULA") { report(AtenaAccessibilityService.hideGrid()) }
 
-        text("ATENA · CONTROL DE MICRÓFONO", true)
-        text("Prueba independiente de Voice Access. Elige el micrófono REAL y verifica la ruta. No modifica ninguna app de Google.")
-        text("1. Conecta tus auriculares Bluetooth o de cable y selecciona su micrófono:")
+        addText("PASO 3 · Conectar auriculares y seleccionar su entrada. Desactiva Google Voice Access mientras pruebas ATENA para evitar conflictos.")
         inputSpinner = Spinner(this)
         column.addView(inputSpinner)
-        button("ACTUALIZAR MICRÓFONOS") { refreshInputs() }
-        button("INICIAR ESCUCHA CON MICRÓFONO ELEGIDO") { start() }
-        button("DETENER ESCUCHA") {
+        addButton("ACTUALIZAR MICRÓFONOS") { refreshInputs() }
+        addText("PASO 4 · Iniciar la escucha. Primero usa el modo compatible. Ese modo utiliza el reconocimiento habitual de Android y NO garantiza que el audio proceda de los auriculares.")
+        addButton("INICIAR ESCUCHA · MODO COMPATIBLE") { start(VoiceCaptureService.MODE_COMPATIBLE) }
+        addText("Si el modo compatible reconoce 'dieciséis', prueba el modo avanzado. Este comprueba la ruta física del micrófono elegido, pero el motor de voz podría no aceptar el audio externo.")
+        addButton("INICIAR ESCUCHA · MICRÓFONO ELEGIDO (EXPERIMENTAL)") { start(VoiceCaptureService.MODE_ROUTED) }
+        addButton("DETENER ESCUCHA") {
             startService(Intent(this, VoiceCaptureService::class.java).apply {
                 action = VoiceCaptureService.ACTION_STOP
             })
         }
-        text("2. Para controlar Atrás/Inicio/Desplazar, activa ATENA manualmente en Accesibilidad:")
-        button("ABRIR AJUSTES DE ACCESIBILIDAD") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-        text("3. Cuadrícula de precisión en dos niveles (4×4): aparece al activar el servicio de Accesibilidad.")
-        button("MOSTRAR CUADRÍCULA") { status.text = AtenaAccessibilityService.showGrid() }
-        button("PROBAR CASILLA 12 · AMPLIAR") { status.text = AtenaAccessibilityService.selectCell(12) }
-        button("PROBAR SUBCASILLA 5 · TOCAR") { status.text = AtenaAccessibilityService.selectCell(5) }
-        button("REINICIAR CUADRÍCULA") { status.text = AtenaAccessibilityService.restartGrid() }
-        button("OCULTAR CUADRÍCULA") { status.text = AtenaAccessibilityService.hideGrid() }
-        text("4. Con el micrófono conectado di '12', luego '5'; o 'cuadrícula', 'ocultar cuadrícula', 'atrás', 'inicio' y 'detener escucha'.")
-        text("5. La aplicación muestra la RUTA REAL de AudioRecord. Si Android usa el micrófono equivocado, detiene la prueba y te avisa.")
-        text("Importante: algunos motores de voz de Android ignoran la entrada de audio externa. La ruta del reconocimiento no puede garantizarse solo con que se vea el micrófono elegido. No graba archivos ni envía voz a servidores propios.")
+        addText("DIAGNÓSTICO · Los mensajes más recientes aparecen primero. La cuadrícula también muestra el último estado de ATENA.")
         status = TextView(this).apply {
             textSize = 15f
-            text = "Estado: esperando selección de micrófono."
-            setPadding(4, 20, 4, 12)
+            text = "• ATENA lista. Primero prueba 16 → 16 con botones.\n"
+            setPadding(4, 12, 4, 18)
         }
         column.addView(status)
-        root.addView(column)
-        setContentView(root)
+        setContentView(ScrollView(this).apply { addView(column) })
         requestMissingPermissions()
         refreshInputs()
     }
@@ -97,53 +98,59 @@ class MainActivity : Activity() {
     }
 
     private fun refreshInputs() {
-        val manager = getSystemService(AudioManager::class.java)
         try {
-            inputs = manager.getDevices(AudioManager.GET_DEVICES_INPUTS).toList()
-            val captions = inputs.map { device ->
-                "${device.productName} · ${deviceLabel(device.type)} · ID ${device.id}"
-            }
-            val labels = if (captions.isEmpty()) listOf("No hay micrófonos disponibles") else captions
-            inputSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, labels)
+            inputs = getSystemService(AudioManager::class.java)
+                .getDevices(AudioManager.GET_DEVICES_INPUTS).toList()
+            val captions = inputs.map { "${it.productName} · ${deviceLabel(it.type)} · ID ${it.id}" }
+            inputSpinner.adapter = ArrayAdapter(
+                this, android.R.layout.simple_spinner_dropdown_item,
+                if (captions.isEmpty()) listOf("No hay entradas disponibles") else captions
+            )
             val headset = inputs.indexOfFirst {
                 it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                    it.type == AudioDeviceInfo.TYPE_USB_HEADSET
             }
             if (headset >= 0) inputSpinner.setSelection(headset)
-        } catch (error: SecurityException) {
-            status.text = "Concede el permiso Bluetooth y vuelve a actualizar: ${error.message}"
+            report("Entradas encontradas: ${inputs.size}. Selecciona tus auriculares si aparecen.")
+        } catch (error: Exception) {
+            report("No se pudieron enumerar los micrófonos: ${error.message}")
         }
     }
 
-    private fun deviceLabel(type: Int): String = when (type) {
-        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "micrófono del celular"
-        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "micrófono Bluetooth de llamadas"
-        AudioDeviceInfo.TYPE_BLE_HEADSET -> "micrófono Bluetooth LE"
+    private fun deviceLabel(type: Int) = when (type) {
+        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "micrófono del teléfono"
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth (llamadas)"
+        AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE"
         AudioDeviceInfo.TYPE_WIRED_HEADSET -> "auriculares con cable"
         AudioDeviceInfo.TYPE_USB_HEADSET -> "auriculares USB"
         AudioDeviceInfo.TYPE_USB_DEVICE -> "micrófono USB"
         else -> "entrada tipo $type"
     }
 
-    private fun start() {
+    private fun start(mode: String) {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            status.text = "Falta permiso del micrófono."
+            report("Permiso de micrófono pendiente.")
             requestMissingPermissions()
             return
         }
         val selected = inputs.getOrNull(inputSpinner.selectedItemPosition)
         if (selected == null) {
-            status.text = "Conecta un micrófono y pulsa ACTUALIZAR."
+            report("Selecciona primero un micrófono con ACTUALIZAR MICRÓFONOS.")
             return
         }
         val intent = Intent(this, VoiceCaptureService::class.java).apply {
             action = VoiceCaptureService.ACTION_START
             putExtra(VoiceCaptureService.EXTRA_INPUT_ID, selected.id)
+            putExtra(VoiceCaptureService.EXTRA_MODE, mode)
         }
-        startForegroundService(intent)
-        status.text = "Solicitando ${selected.productName}. Espera la comprobación de ruta real..."
+        try {
+            startForegroundService(intent)
+            report("Inicio solicitado: ${selected.productName}, modo $mode.")
+        } catch (ex: Exception) {
+            report("No se pudo iniciar la escucha: ${ex.message}")
+        }
     }
 
     override fun onStart() {

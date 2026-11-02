@@ -20,6 +20,15 @@ class GridLogicTest {
         assertEquals(5, GridSpeech.number("NÚMERO CINCO"))
         assertEquals(16, GridSpeech.number("dieciséis"))
     }
+    @Test fun sixteenThenSixteenTargetsBottomRight() {
+        val area = GridLogic.target(GridLogic.Area(0f, 0f, 400f, 800f), 16, 16)
+        assertEquals(GridLogic.Area(375f, 750f, 400f, 800f), area)
+        assertEquals(387.5f, area.centerX, 0.001f)
+        assertEquals(775f, area.centerY, 0.001f)
+        assertEquals(16, GridSpeech.number("dieciséis"))
+        assertEquals(16, GridSpeech.number("DIEZ Y SEIS"))
+        assertEquals(16, GridSpeech.number("16"))
+    }
     @Test fun unrelatedNumbersAreNotTaps() {
         assertNull(GridSpeech.number("¿Cuál es el área 12 de Brodmann?"))
         assertNull(GridSpeech.number("2026"))
