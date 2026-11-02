@@ -1,43 +1,36 @@
-# ATENA Mic Control V0.6 — prueba Android
+# ATENA Cuadrícula V0.7 — Selector de micrófono y pulsación por voz
 
-**Proyecto alternativo independiente; no se ha modificado Google Voice Access.**
+**Proyecto Android nuevo e independiente de Google Voice Access.** No modifica su APK, su firma ni el micrófono utilizado por Voice Access.
 
-## Qué hace
+## Funcionamiento solicitado
 
-- Lista entradas de audio reales detectadas por Android (celular, Bluetooth, cable/USB).
-- Permite escoger una entrada específica y solicita esa ruta mediante `AudioRecord.setPreferredDevice()`.
-- Para auriculares Bluetooth solicita además la ruta de comunicación con `AudioManager.setCommunicationDevice()`.
-- Comprueba `AudioRecord.getRoutedDevice()` con la captura en curso y **se detiene si Android no utiliza el dispositivo seleccionado**.
-- Intenta transmitir PCM 16 kHz por `RecognizerIntent.EXTRA_AUDIO_SOURCE` al `SpeechRecognizer` de Android 13+.
-- Reconoce órdenes: «inicio», «atrás», «notificaciones», «subir», «bajar», «abrir ChatGPT», «detener escucha».
-- Navegación por accesibilidad solo tras activación manual del usuario. No hay API externa, escucha oculta, carga de archivos, ni almacenamiento de grabaciones.
-- Notificaciones silenciosas (no garantiza ausencia de pitidos del reconocimiento o del sistema).
+- Al activar manualmente el servicio **ATENA control por voz** en Accesibilidad, aparece de inmediato una cuadrícula de **4 × 4 (16 casillas)** sobre la pantalla, incluso al cambiar de aplicaciones.
+- Di **«12»**: la casilla 12 se divide en **otras 16 subcasillas**, sin tocar todavía la pantalla.
+- Di **«5»**: ATENA solicita una pulsación en el centro de la subcasilla 5 dentro de la casilla 12, y regresa a la cuadrícula principal.
+- También acepta «casilla doce», «número cinco», «mostrar cuadrícula», «ocultar cuadrícula», «reiniciar cuadrícula», «volver cuadrícula».
+- No lee, copia ni transmite el contenido de la pantalla. El overlay es no interactivo al tacto; las pulsaciones dependen del servicio de accesibilidad activado voluntariamente.
+- La pantalla debe estar encendida y desbloqueada para operar la cuadrícula.
 
-## Limitaciones cruciales
+## Comprobar sin depender del micrófono
 
-- **Este prototipo no reprograma ni cambia la entrada de Google Voice Access.** Esa aplicación no expone una interfaz de enrutamiento controlable por terceros.
-- **La entrada externa de SpeechRecognizer es opcional**: Google advierte que un servicio de reconocimiento puede ignorar `EXTRA_AUDIO_SOURCE` y abrir por su cuenta el micrófono predeterminado. La comprobación de ruta AudioRecord NO prueba que el motor de Google acepte el audio suministrado. Para control garantizado necesitaríamos un motor de reconocimiento sobre el PCM que capturemos nosotros.
-- El reconocimiento opera por turnos y puede interrumpirse/pitar; no promete escucha permanente con pantalla apagada ni funcionamiento continuo en segundo plano.
-- No está integrado con ChatGPT ni con Voice Access; «abrir ChatGPT» solo intenta lanzar la aplicación oficial o la web.
-- Bluetooth con A2DP de solo reproducción no es una fuente de micrófono: tiene que existir una entrada Bluetooth de llamadas (`SCO` o `BLE_HEADSET`).
-- No lo hemos compilado en este entorno ni instalado en un dispositivo; los resultados dependen del fabricante, auriculares y versión de Android.
+1. Instala el APK que se genere desde este proyecto.
+2. En **Ajustes → Accesibilidad**, activa voluntariamente **ATENA control por voz** si confías en la aplicación y entiendes sus permisos; Android puede mostrar «configuración restringida» con APK instalados fuera de Play Store. No es necesario desactivar Play Protect para desarrollar o compilar el proyecto.
+3. Aparecerá la cuadrícula principal. Si no, abre la app y pulsa **MOSTRAR CUADRÍCULA**.
+4. Pulsa **PROBAR CASILLA 12 · AMPLIAR**. Observa cómo la casilla 12 se subdivide.
+5. Pulsa **PROBAR SUBCASILLA 5 · TOCAR**. Android intentará pulsar esa región.
+6. Pulsa **REINICIAR CUADRÍCULA** o **OCULTAR CUADRÍCULA** cuando lo necesites.
+
+## Probar con auriculares
+
+1. Desactiva temporalmente Google Voice Access para evitar competencia por el micrófono.
+2. Conecta los auriculares. Abre ATENA, concede el permiso de micrófono y dispositivos cercanos si corresponde.
+3. Pulsa **ACTUALIZAR MICRÓFONOS**, selecciona la entrada deseada y **INICIAR ESCUCHA CON MICRÓFONO ELEGIDO**.
+4. Di «12» y luego «5» en **dos turnos distintos**. Los comandos «inicio», «atrás», «subir», «bajar» y «abrir ChatGPT» de V0.6 siguen presentes.
+
+**Limitación importante:** `AudioRecord.setPreferredDevice()` comprueba por qué entrada captura ATENA, pero el motor de `SpeechRecognizer` de Android **puede ignorar** el audio externo suministrado. Por ello la ruta de voz completa por auriculares no está garantizada. Las escuchas pueden reiniciarse y producir sonidos del sistema. Las pruebas con botones permiten validar la cuadrícula independientemente de ese problema.
 
 ## Compilar en GitHub
 
-Sube **el contenido** de este proyecto a un repositorio GitHub propio (o reemplaza los archivos del proyecto ATENA actual después de guardar una copia). `Actions` → `Compilar ATENA MIC v0.6` → `Run workflow`. Descarga el artefacto ZIP; dentro estará `app-debug.apk`.
+Usa un repositorio nuevo `atena-cuadricula`, o reemplaza los archivos del repositorio `atena-mic-control` (incluidos el código fuente y `.github/workflows/build-apk.yml`, manteniendo copia de la V0.6). En **Actions → Compilar ATENA CUADRICULA v0.7**, ejecuta el flujo. Si pasa pruebas, descarga **ATENA-CUADRICULA-v0-7-APK** y extrae `app-debug.apk`.
 
-**Recomendación:** usa un repositorio nuevo `atena-mic-control` para no perder tu V0.5 estable. No cambies tu APK de Google Voice Access.
-
-## Prueba en Samsung
-
-1. Conecta auriculares y, si corresponde, concede Bluetooth y micrófono.
-2. Cierra temporalmente Voice Access para evitar que dos aplicaciones compitan por el micrófono.
-3. Abre ATENA Mic Control, pulsa «ACTUALIZAR MICRÓFONOS» y selecciona la entrada Bluetooth/cable real (no solo el altavoz).
-4. Para controlar Inicio/Atrás, activa manualmente ATENA en Ajustes de Accesibilidad.
-5. Pulsa «INICIAR ESCUCHA». Debe mostrar «RUTA REAL CONFIRMADA: [auriculares]». Si no, detenerá la captura con explicación.
-6. Di «atrás», «inicio» o «detener escucha». Observa el texto «Reconocido»; así sabremos si tu motor respeta la ruta elegida.
-7. Tapar el micrófono del móvil y hablar al auricular ayuda como prueba práctica, pero no sustituye análisis de la ruta del reconocedor.
-
-## Seguridad
-
-Se solicitan micrófono, Bluetooth Connect (solo dispositivos vinculados), notificaciones y servicio de Accesibilidad. El servicio de accesibilidad requiere activación manual y permite operaciones globales únicamente tras reconocer comandos. No solicita permiso de Internet, ni recopila grabaciones. El motor de reconocimiento del dispositivo puede utilizar servicios propios/en la nube conforme a sus ajustes.
+**Estado:** código fuente y pruebas preparados; todavía debe compilarse con Android SDK y verificarse en un Samsung. No es una aplicación oficial de Google ni está conectada a ChatGPT para formular respuestas.

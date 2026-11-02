@@ -66,8 +66,14 @@ class MainActivity : Activity() {
         button("ABRIR AJUSTES DE ACCESIBILIDAD") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        text("3. Di: 'atrás', 'inicio', 'notificaciones', 'subir', 'bajar', 'abrir ChatGPT' o 'detener escucha'.")
-        text("4. La aplicación muestra la RUTA REAL de AudioRecord. Si Android usa el micrófono equivocado, detiene la prueba y te avisa.")
+        text("3. Cuadrícula de precisión en dos niveles (4×4): aparece al activar el servicio de Accesibilidad.")
+        button("MOSTRAR CUADRÍCULA") { status.text = AtenaAccessibilityService.showGrid() }
+        button("PROBAR CASILLA 12 · AMPLIAR") { status.text = AtenaAccessibilityService.selectCell(12) }
+        button("PROBAR SUBCASILLA 5 · TOCAR") { status.text = AtenaAccessibilityService.selectCell(5) }
+        button("REINICIAR CUADRÍCULA") { status.text = AtenaAccessibilityService.restartGrid() }
+        button("OCULTAR CUADRÍCULA") { status.text = AtenaAccessibilityService.hideGrid() }
+        text("4. Con el micrófono conectado di '12', luego '5'; o 'cuadrícula', 'ocultar cuadrícula', 'atrás', 'inicio' y 'detener escucha'.")
+        text("5. La aplicación muestra la RUTA REAL de AudioRecord. Si Android usa el micrófono equivocado, detiene la prueba y te avisa.")
         text("Importante: algunos motores de voz de Android ignoran la entrada de audio externa. La ruta del reconocimiento no puede garantizarse solo con que se vea el micrófono elegido. No graba archivos ni envía voz a servidores propios.")
         status = TextView(this).apply {
             textSize = 15f

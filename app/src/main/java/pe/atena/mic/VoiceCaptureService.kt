@@ -323,9 +323,19 @@ class VoiceCaptureService : Service() {
     }
 
     private fun handleCommand(heard: String) {
+        val number = GridSpeech.number(heard)
+        if (number != null && AtenaAccessibilityService.isGridVisible()) {
+            publish(AtenaAccessibilityService.selectCell(number))
+            scheduleNext(650)
+            return
+        }
         val action = CommandRouter.action(heard)
-        publish("Reconocido: '$heard'. Acción: ${action.name}. (No implica que el reconocedor haya respetado la fuente externa.)")
+        publish("Reconocido: '$heard'. Acción: ${action.name}. (No garantiza la fuente externa.)")
         when (action) {
+            CommandRouter.Action.GRID_SHOW -> publish(AtenaAccessibilityService.showGrid())
+            CommandRouter.Action.GRID_HIDE -> publish(AtenaAccessibilityService.hideGrid())
+            CommandRouter.Action.GRID_RESET -> publish(AtenaAccessibilityService.restartGrid())
+            CommandRouter.Action.GRID_BACK -> publish(AtenaAccessibilityService.backGrid())
             CommandRouter.Action.STOP -> {
                 stopWithMessage("Escucha detenida por comando de voz.")
                 return
