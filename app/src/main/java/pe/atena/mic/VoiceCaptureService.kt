@@ -36,12 +36,16 @@ class VoiceCaptureService : Service() {
         const val ACTION_START = "pe.atena.mic.START"
         const val ACTION_STOP = "pe.atena.mic.STOP"
         const val ACTION_STATUS = "pe.atena.mic.STATUS"
+        const val ACTION_METER = "pe.atena.mic.METER"
+        const val EXTRA_LEVEL = "level"
+        const val EXTRA_SOURCE = "source"
         const val EXTRA_INPUT_ID = "input_id"
         const val EXTRA_MESSAGE = "message"
         const val EXTRA_MODE = "mode"
         const val MODE_COMPATIBLE = "compatible"
         const val MODE_ROUTED = "routed"
-        private const val CHANNEL = "atena_mic_capture_v06"
+        const val MODE_MONITOR = "monitor"
+        private const val CHANNEL = "atena_mic_capture_v09"
         private const val NOTIFICATION_ID = 71
         private const val SAMPLE_RATE = 16000
     }
@@ -58,6 +62,7 @@ class VoiceCaptureService : Service() {
     private var mode = MODE_COMPATIBLE
     private var generation = 0
     private var errors = 0
+    private var lastMeterTime = 0L
     private var adjustedAudioMode = false
     private var savedAudioMode = AudioManager.MODE_NORMAL
 
@@ -107,10 +112,12 @@ class VoiceCaptureService : Service() {
                 stopCaptureOnly()
                 selectedId = intent.getIntExtra(EXTRA_INPUT_ID, -1)
                 mode = intent.getStringExtra(EXTRA_MODE)?.takeIf {
-                    it == MODE_ROUTED
+                    it == MODE_ROUTED || it == MODE_MONITOR
                 } ?: MODE_COMPATIBLE
                 active = true
                 errors = 0
+                lastMeterTime = 0L
+                publishMeter(0, "Esperando audio...")
                 try {
                     startForeground(
                         NOTIFICATION_ID, notification(),
@@ -134,6 +141,23 @@ class VoiceCaptureService : Service() {
             setPackage(packageName)
             putExtra(EXTRA_MESSAGE, message)
         })
+    }
+
+    /** Evento liviano: actualiza la barra sin llenar el historial de diagnóstico. */
+    private fun publishMeter(level: Int, source: String) {
+        sendBroadcast(Intent(ACTION_METER).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_LEVEL, level.coerceIn(0, 100))
+            putExtra(EXTRA_SOURCE, source)
+        })
+    }
+
+    private fun meterThrottled(level: Int, source: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastMeterTime >= 180L) {
+            lastMeterTime = now
+            publishMeter(level, source)
+        }
     }
 
     private fun chosenInput(): AudioDeviceInfo? = try {
@@ -170,6 +194,10 @@ class VoiceCaptureService : Service() {
         handler.removeCallbacks(nextAttempt)
         handler.removeCallbacks(watchdog)
         finishSession()
+        if (mode == MODE_MONITOR) {
+            startSoundMonitor()
+            return
+        }
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             stopWithMessage("No hay motor SpeechRecognizer disponible en Android.")
             return
@@ -228,7 +256,11 @@ class VoiceCaptureService : Service() {
                 override fun onBeginningOfSpeech() {
                     if (session == generation && active) publish("El motor detectó voz (no garantiza que sea del micrófono elegido).")
                 }
-                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onRmsChanged(rmsdB: Float) {
+                    if (session == generation && active)
+                        meterThrottled(SoundMeter.fromRecognizerRms(rmsdB),
+                            "Motor de voz Android (entrada no certificada)")
+                }
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {}
                 override fun onPartialResults(partialResults: Bundle?) {
@@ -276,6 +308,91 @@ class VoiceCaptureService : Service() {
     }
 
     /**
+     * Prueba independiente del reconocedor: graba solo en memoria para calcular
+     * niveles en tiempo real. No guarda muestras de voz ni ejecuta comandos.
+     */
+    private fun startSoundMonitor() {
+        val target = chosenInput()
+        if (target == null) {
+            stopWithMessage("MONITOR: micrófono seleccionado ausente; actualiza la lista.")
+            return
+        }
+        try {
+            configureBluetooth(target)
+            val minSize = AudioRecord.getMinBufferSize(
+                SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
+            )
+            if (minSize <= 0) throw IllegalStateException("No se admite PCM mono 16 kHz")
+            val source = if (target.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                target.type == AudioDeviceInfo.TYPE_BLE_HEADSET)
+                MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
+            val audio = AudioRecord.Builder()
+                .setAudioSource(source)
+                .setAudioFormat(AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
+                    .build())
+                .setBufferSizeInBytes(max(minSize * 2, 6400))
+                .build()
+            if (audio.state != AudioRecord.STATE_INITIALIZED) {
+                audio.release()
+                throw IllegalStateException("AudioRecord no se inicializó")
+            }
+            recorder = audio
+            if (!audio.setPreferredDevice(target))
+                throw IllegalStateException("Android rechazó preferencia de entrada: ${target.productName}")
+            audio.startRecording()
+            if (audio.recordingState != AudioRecord.RECORDSTATE_RECORDING)
+                throw IllegalStateException("Android no inició AudioRecord")
+            val session = ++generation
+            publish("MONITOR DE SONIDO: comprobando ruta ${target.productName}. Habla y observa la barra.")
+            captureThread = Thread({
+                val buffer = ByteArray(3200) // 100 ms a 16 kHz/16 bits
+                val start = SystemClock.elapsedRealtime()
+                var routeConfirmed = false
+                try {
+                    while (active && generation == session && !Thread.currentThread().isInterrupted) {
+                        val count = audio.read(buffer, 0, buffer.size)
+                        if (count <= 0) break
+                        if (!routeConfirmed) {
+                            val routed = audio.routedDevice
+                            if (routed != null) {
+                                if (routed.id != target.id) {
+                                    handler.post {
+                                        if (active && generation == session)
+                                            stopWithMessage("RUTA INCORRECTA: se eligió ${target.productName}, Android usa ${routed.productName}.")
+                                    }
+                                    break
+                                }
+                                routeConfirmed = true
+                                handler.post {
+                                    if (active && generation == session)
+                                        publish("RUTA CONFIRMADA: ${routed.productName} (ID ${routed.id}). La barra mide sonido; NO demuestra reconocimiento de palabras.")
+                                }
+                            } else if (SystemClock.elapsedRealtime() - start > 2500) {
+                                handler.post {
+                                    if (active && generation == session)
+                                        stopWithMessage("Android no confirmó qué micrófono captura el sonido.")
+                                }
+                                break
+                            }
+                        }
+                        if (routeConfirmed) {
+                            meterThrottled(SoundMeter.fromPcm16(buffer, count),
+                                "Captura física: ${target.productName}")
+                        }
+                    }
+                } catch (_: Exception) {
+                    // Es normal que AudioRecord se detenga al pulsar DETENER.
+                }
+            }, "atena-sonido-monitor").apply { isDaemon = true; start() }
+        } catch (ex: Exception) {
+            stopWithMessage("MONITOR NO INICIADO: ${ex.message}")
+        }
+    }
+
+    /**
      * Usa el SpeechRecognizer normal de Android. Evita competir con el motor de voz
      * mediante AudioRecord + un segundo micrófono. NO certifica micrófono Bluetooth;
      * es una prueba de compatibilidad y ejecución de comandos.
@@ -299,7 +416,11 @@ class VoiceCaptureService : Service() {
                 override fun onBeginningOfSpeech() {
                     if (session == generation && active) publish("VOZ DETECTADA por el reconocedor de Android.")
                 }
-                override fun onRmsChanged(rmsdB: Float) {}
+                override fun onRmsChanged(rmsdB: Float) {
+                    if (session == generation && active)
+                        meterThrottled(SoundMeter.fromRecognizerRms(rmsdB),
+                            "Motor de voz Android (entrada no certificada)")
+                }
                 override fun onBufferReceived(buffer: ByteArray?) {}
                 override fun onEndOfSpeech() {
                     if (session == generation && active) publish("Procesando lo que dijiste...")
@@ -386,6 +507,8 @@ class VoiceCaptureService : Service() {
                         output.write(buffer, 0, count)
                         val now = SystemClock.elapsedRealtime()
                         val level = rms(buffer, count)
+                        meterThrottled(SoundMeter.fromPcm16(buffer, count),
+                            "Captura PCM: ${target.productName} (no verifica reconocedor)")
                         if (level > 550) {
                             receivedVoice = true
                             lastVoiceTime = now
@@ -482,6 +605,7 @@ class VoiceCaptureService : Service() {
 
     private fun stopCaptureOnly() {
         active = false
+        publishMeter(0, "Detenido")
         handler.removeCallbacksAndMessages(null)
         finishSession()
         try { audioManager.clearCommunicationDevice() } catch (_: Exception) {}

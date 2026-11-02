@@ -1,27 +1,12 @@
-ATENA V0.8 - CÓMO CONSEGUIR EL APK SIN INSTALAR UN PARCHE
+ATENA V0.9 — INSTALADOR POR GITHUB
 
-1) En una computadora, descomprime ATENA_V0_8_FUENTES.zip.
-2) Abre https://github.com/david3xxx/atena-mic-control/upload/main
-3) Arrastra A LA PÁGINA EL CONTENIDO de la carpeta descomprimida,
-   es decir: app, build.gradle.kts, settings.gradle.kts, gradle.properties,
-   LEEME.md, y .github si aparece. NO arrastres solo el ZIP.
-4) Pulsa "Commit changes".
-5) Ve a https://github.com/david3xxx/atena-mic-control/actions
-   y abre la compilación más reciente. Espera a que aparezca en verde.
-6) Abajo, en "Artifacts", descarga el paquete APK.
-   El nombre puede seguir siendo ATENA-MIC-v0-6-APK si GitHub conservó
-   el workflow antiguo. El APK debe ser el de la compilación más reciente,
-   cuyo app/build.gradle.kts incluye versionCode 8.
-7) Extrae el ZIP descargado y busca app-debug.apk; ese SÍ es el instalador.
-   Si Android muestra un conflicto de firma, desinstala primero la V0.7.
-8) La primera prueba es por botones: casilla 16 -> subcasilla 16.
-   Después, inicia escucha en MODO COMPATIBLE y di "dieciséis" dos veces.
-   En la prueba avanzada, ATENA intentará reconocer la voz desde el micrófono
-   seleccionado, pero el motor de Android podría ignorar ese audio.
+1. Descomprime el ZIP en tu computadora.
+2. Entra a https://github.com/david3xxx/atena-mic-control/upload/main
+3. Arrastra TODOS los archivos y carpetas que están DENTRO de ATENA_V0_9_BARRA_AUDIO_FUENTES (incluida la carpeta oculta .github si aparece).
+4. Confirma sobrescritura y pulsa Commit changes.
+5. GitHub -> Actions -> último flujo "Compilar ATENA v0.9". Al estar en verde, descarga ATENA-V0-9-BARRA-AUDIO-APK.
+6. Descomprime el artifact y abre app-debug.apk en tu Samsung.
 
-No desactives Play Protect si señala una aplicación dañina.
-ATENA solicita un permiso sensible de Accesibilidad: autorízalo únicamente
-si confías en el código y desactívalo al terminar las pruebas.
+Cuando termines de subir, escribe: ATENA, YA SUBÍ LA V0.9.
 
-IMPORTANTE: Este ZIP contiene código fuente, NO es un APK ni se instala
-por sí solo. Hace falta la compilación de GitHub Actions.
+Si GitHub no muestra la acción, comprueba que el flujo .github/workflows/build-apk.yml siga guardado.

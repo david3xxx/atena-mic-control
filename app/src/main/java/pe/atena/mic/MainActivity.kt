@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.ProgressBar
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
@@ -22,10 +23,20 @@ import android.widget.TextView
 class MainActivity : Activity() {
     private lateinit var inputSpinner: Spinner
     private lateinit var status: TextView
+    private lateinit var soundBar: ProgressBar
+    private lateinit var soundCaption: TextView
     private var inputs = emptyList<AudioDeviceInfo>()
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            intent?.getStringExtra(VoiceCaptureService.EXTRA_MESSAGE)?.let { this@MainActivity.report(it) }
+            if (intent?.action == VoiceCaptureService.ACTION_METER) {
+                val level = intent.getIntExtra(VoiceCaptureService.EXTRA_LEVEL, 0).coerceIn(0, 100)
+                soundBar.progress = level
+                val source = intent.getStringExtra(VoiceCaptureService.EXTRA_SOURCE) ?: "Sin fuente"
+                soundCaption.text = "Nivel: $level/100 · $source"
+            } else {
+                intent?.getStringExtra(VoiceCaptureService.EXTRA_MESSAGE)
+                    ?.let { this@MainActivity.report(it) }
+            }
         }
     }
 
@@ -50,32 +61,44 @@ class MainActivity : Activity() {
         fun addButton(value: String, onTap: () -> Unit) {
             column.addView(Button(this).apply { text = value; setOnClickListener { onTap() } })
         }
-        addText("ATENA V0.8 · CASILLA DIECISÉIS", true)
-        addText("El objetivo es: decir 'dieciséis' → ampliar la casilla 16 → decir 'dieciséis' → pulsar su subcasilla 16. Los números se dicen en español, del uno al dieciséis.")
-        addText("PASO 1 · Activar el servicio de accesibilidad de ATENA. Este permiso permite pulsaciones en pantalla; actívalo únicamente si confías en la aplicación.")
+        addText("ATENA V0.9 · BARRA DE SONIDO", true)
+        addText("PRIMERO · Comprueba el micrófono. Habla y mira si se mueve la barra. No necesitas activar la cuadrícula para esta prueba.")
+        inputSpinner = Spinner(this)
+        column.addView(inputSpinner)
+        addButton("ACTUALIZAR MICRÓFONOS") { refreshInputs() }
+        soundBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            isIndeterminate = false
+            minimumHeight = (14 * resources.displayMetrics.density).toInt()
+        }
+        column.addView(soundBar, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, (18 * resources.displayMetrics.density).toInt()
+        ))
+        soundCaption = TextView(this).apply {
+            text = "Nivel: 0/100 · Prueba sin iniciar"
+            textSize = 14f
+            setPadding(0, 6, 0, 10)
+        }
+        column.addView(soundCaption)
+        addButton("PROBAR MICRÓFONO · VER BARRA") { start(VoiceCaptureService.MODE_MONITOR) }
+        addButton("DETENER PRUEBA DE SONIDO") { stopListening() }
+        addText("Esta barra muestra energía del sonido: no asegura que Android entienda palabras. Prueba primero el micrófono del teléfono y después tus auriculares.")
+        addText("SEGUNDO · Prueba la casilla 16. Los números se dicen en español, del uno al dieciséis.")
         addButton("ABRIR ACCESIBILIDAD") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        addText("PASO 2 · Probar las pulsaciones SIN usar la voz. Esto distingue los errores de accesibilidad de los del micrófono.")
         addButton("MOSTRAR CUADRÍCULA") { report(AtenaAccessibilityService.showGrid()) }
         addButton("1. CASILLA 16 · AMPLIAR") { report(AtenaAccessibilityService.selectCell(16)) }
         addButton("2. SUBCASILLA 16 · TOCAR") { report(AtenaAccessibilityService.selectCell(16)) }
         addButton("REINICIAR CUADRÍCULA") { report(AtenaAccessibilityService.restartGrid()) }
         addButton("OCULTAR CUADRÍCULA") { report(AtenaAccessibilityService.hideGrid()) }
-
-        addText("PASO 3 · Conectar auriculares y seleccionar su entrada. Desactiva Google Voice Access mientras pruebas ATENA para evitar conflictos.")
-        inputSpinner = Spinner(this)
-        column.addView(inputSpinner)
-        addButton("ACTUALIZAR MICRÓFONOS") { refreshInputs() }
+        addText("TERCERO · Desactiva temporalmente Google Voice Access al probar ATENA. Para probar reconocimiento, pulsa iniciar escucha y di 'dieciséis', después 'dieciséis'.")
         addText("PASO 4 · Iniciar la escucha. Primero usa el modo compatible. Ese modo utiliza el reconocimiento habitual de Android y NO garantiza que el audio proceda de los auriculares.")
         addButton("INICIAR ESCUCHA · MODO COMPATIBLE") { start(VoiceCaptureService.MODE_COMPATIBLE) }
         addText("Si el modo compatible reconoce 'dieciséis', prueba el modo avanzado. Este comprueba la ruta física del micrófono elegido, pero el motor de voz podría no aceptar el audio externo.")
         addButton("INICIAR ESCUCHA · MICRÓFONO ELEGIDO (EXPERIMENTAL)") { start(VoiceCaptureService.MODE_ROUTED) }
-        addButton("DETENER ESCUCHA") {
-            startService(Intent(this, VoiceCaptureService::class.java).apply {
-                action = VoiceCaptureService.ACTION_STOP
-            })
-        }
+        addButton("DETENER ESCUCHA") { stopListening() }
         addText("DIAGNÓSTICO · Los mensajes más recientes aparecen primero. La cuadrícula también muestra el último estado de ATENA.")
         status = TextView(this).apply {
             textSize = 15f
@@ -119,6 +142,12 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun stopListening() {
+        startService(Intent(this, VoiceCaptureService::class.java).apply {
+            action = VoiceCaptureService.ACTION_STOP
+        })
+    }
+
     private fun deviceLabel(type: Int) = when (type) {
         AudioDeviceInfo.TYPE_BUILTIN_MIC -> "micrófono del teléfono"
         AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth (llamadas)"
@@ -155,7 +184,11 @@ class MainActivity : Activity() {
 
     override fun onStart() {
         super.onStart()
-        registerReceiver(receiver, IntentFilter(VoiceCaptureService.ACTION_STATUS), Context.RECEIVER_NOT_EXPORTED)
+        val filter = IntentFilter().apply {
+            addAction(VoiceCaptureService.ACTION_STATUS)
+            addAction(VoiceCaptureService.ACTION_METER)
+        }
+        registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
     }
     override fun onStop() {
         unregisterReceiver(receiver)
