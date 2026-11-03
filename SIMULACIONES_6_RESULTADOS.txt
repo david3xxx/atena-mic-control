@@ -1,0 +1,11 @@
+APROBADA | 1 ? Activaci?n con WASH en espa?ol
+APROBADA | 2 ? Transcripciones fon?ticas aproximadas
+APROBADA | 3 ? Rechazo de falsas coincidencias largas
+APROBADA | 4 ? Navegaci?n l?gica SD y bot?n de Voz
+APROBADA | 5 ? No reactivar micr?fono si Voz sigue activa
+APROBADA | 6 ? Rearme y segundo ciclo WASH tras cierre
+TOTAL: 6/6 simulaciones de l?gica aprobadas
+
+ALCANCE: son simulaciones de reglas Kotlin ejecutadas en JVM, NO seis pruebas reales
+con el micrófono de un Samsung. El reconocimiento acústico, la interacción
+con la app ChatGPT y la continuidad del servicio Android requieren instalación.

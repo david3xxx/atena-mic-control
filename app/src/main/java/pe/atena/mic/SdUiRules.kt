@@ -34,6 +34,16 @@ object SdUiRules {
             .any { s.contains(it) } || s == "voz" || s == "voice"
     }
 
+    /** Editor de texto o control de nueva llamada visibles al regresar del chat de voz. */
+    fun isChatComposer(value: CharSequence?): Boolean {
+        val s = normalized(value)
+        return s == "preguntar a chatgpt" || s == "ask chatgpt" ||
+            s == "mensaje a chatgpt" || s == "message chatgpt" ||
+            s == "pregunta lo que quieras" || s == "ask anything" ||
+            s == "escribe un mensaje" || s == "escribir un mensaje" ||
+            s == "send a message"
+    }
+
     fun isActiveVoiceIndicator(value: CharSequence?): Boolean {
         val s = normalized(value)
         return listOf("finalizar conversacion de voz", "salir del modo de voz", "terminar voz",

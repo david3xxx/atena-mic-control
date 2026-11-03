@@ -1,4 +1,4 @@
-ATENA V1.4 - WASH -> SD -> VOZ
+ATENA V1.5 - WASH -> SD -> VOZ
 
 Este ZIP contiene archivos fuente, NO un APK instalable.
 
@@ -6,7 +6,7 @@ Este ZIP contiene archivos fuente, NO un APK instalable.
 2. Sube todos los archivos del interior de este ZIP a main, conservando carpetas.
 3. Pulsa Commit changes.
 4. Abre Actions y espera a que termine la ejecucion de Compilar Android.
-5. En Artifacts, descarga ATENA-WASH-SD-v1-4-APK.
+5. En Artifacts, descarga ATENA-WASH-SD-v1-5-APK.
 6. Extrae app-debug.apk del ZIP y abrelo en el Samsung para instalar.
 7. Activa Accesibilidad de ATENA para que pueda buscar SD y pulsar Voz.
 8. Primero prueba el boton PROBAR AHORA - ABRIR SD Y PULSAR VOZ.

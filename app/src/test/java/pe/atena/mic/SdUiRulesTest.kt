@@ -28,4 +28,9 @@ class SdUiRulesTest {
         assertTrue(SdUiRules.isActiveVoiceIndicator("Salir del modo de voz"))
         assertFalse(SdUiRules.isActiveVoiceIndicator("Iniciar voz"))
     }
+    @org.junit.Test fun chatComposerRules() {
+        org.junit.Assert.assertTrue(SdUiRules.isChatComposer("Preguntar a ChatGPT"))
+        org.junit.Assert.assertTrue(SdUiRules.isChatComposer("Ask ChatGPT"))
+        org.junit.Assert.assertFalse(SdUiRules.isChatComposer("Una respuesta que habla sobre ChatGPT"))
+    }
 }

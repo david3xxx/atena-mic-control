@@ -41,7 +41,7 @@ class WashListenerService : Service() {
         const val MODE_MONITOR = "monitor"
         const val MODE_LOCAL = "local"
         const val MODE_COMPATIBLE = "compatible"
-        private const val CHANNEL_ID = "atena_wash_v14"
+        private const val CHANNEL_ID = "atena_wash_v15"
         private const val NOTIFICATION_ID = 313
         private var current = WeakReference<WashListenerService>(null)
         fun openFromMenuIfRunning(): Boolean {
@@ -50,18 +50,24 @@ class WashListenerService : Service() {
             service.handler.post { service.openChatGPT() }
             return true
         }
+        /** Indica si cedimos temporalmente el micrófono para ChatGPT. */
+        fun isWaitingForChat(): Boolean = current.get()?.let {
+            it.active && it.pausedForChat && !it.monitoring
+        } == true
+
         fun rearmAfterChatLeft() {
             current.get()?.let { service ->
                 service.handler.post {
                     if (service.active && service.pausedForChat &&
                         service.getSharedPreferences("atena", android.content.Context.MODE_PRIVATE)
                             .getBoolean("auto_rearm", true)) {
-                        service.publish("ChatGPT salió del primer plano. Reintentando escuchar WASH.")
+                        service.publish("REACTIVANDO WASH: recuperando micrófono tras ChatGPT.")
                         service.stopCurrentCapture()
                         service.pausedForChat = false
                         service.failures = 0
                         service.mode = service.lastMode
                         service.startRecognition()
+                        service.notifyUser("ATENA escuchando WASH otra vez")
                     }
                 }
             }
@@ -160,6 +166,25 @@ class WashListenerService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
             when (intent?.action) {
+                null -> {
+                    // Android reinició el proceso: intentar recuperar escucha SOLO si el usuario
+                    // la había dejado activa. Android puede denegar el micrófono desde fondo.
+                    val saved = getSharedPreferences("atena", MODE_PRIVATE)
+                    if (!saved.getBoolean("wash_should_listen", false)) {
+                        stopSelf(); return START_NOT_STICKY
+                    }
+                    active = true
+                    monitoring = false
+                    pausedForChat = false
+                    failures = 0
+                    mode = saved.getString("wash_last_mode", MODE_COMPATIBLE) ?: MODE_COMPATIBLE
+                    lastMode = mode
+                    inputId = saved.getInt("wash_input_id", -1)
+                    publish("Android reinició ATENA; intentando recuperar escucha WASH.")
+                    startForeground(NOTIFICATION_ID, notification("Recuperando escucha WASH"),
+                        android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                    startRecognition()
+                }
                 ACTION_START -> {
                     if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                         publish("Falta permiso de micrófono: abre ATENA y concédelo.")
@@ -173,6 +198,10 @@ class WashListenerService : Service() {
                     inputId = intent.getIntExtra(EXTRA_INPUT_ID, -1)
                     mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_LOCAL
                     if (mode != MODE_MONITOR) lastMode = mode
+                    getSharedPreferences("atena", MODE_PRIVATE).edit()
+                        .putBoolean("wash_should_listen", mode != MODE_MONITOR)
+                        .putString("wash_last_mode", lastMode)
+                        .putInt("wash_input_id", inputId).apply()
                     startForeground(NOTIFICATION_ID, notification("Inicializando $mode"),
                         android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
                     if (mode == MODE_MONITOR) startMicrophoneTest() else startRecognition()
@@ -191,6 +220,8 @@ class WashListenerService : Service() {
                 }
                 ACTION_OPEN -> openChatGPT()
                 ACTION_STOP -> {
+                    getSharedPreferences("atena", MODE_PRIVATE).edit()
+                        .putBoolean("wash_should_listen", false).apply()
                     active = false
                     pausedForChat = false
                     stopCurrentCapture()
@@ -206,7 +237,8 @@ class WashListenerService : Service() {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
-        return START_NOT_STICKY
+        // Servicio persistente solicitado por el usuario. Android puede detenerlo de todos modos.
+        return START_STICKY
     }
 
     private fun selectedDevice(): AudioDeviceInfo? = try {
@@ -246,8 +278,9 @@ class WashListenerService : Service() {
         stopCurrentCapture()
         monitoring = false
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            publish("El teléfono no tiene servicio de reconocimiento disponible.")
-            notifyUser("Motor de voz no disponible")
+            publish("Motor de voz no disponible. Nuevo intento automático en 30 s.")
+            notifyUser("Motor de voz no disponible · reintento en 30 s")
+            handler.postDelayed(restart, 30000)
             return
         }
         val localAvailable = SpeechRecognizer.isOnDeviceRecognitionAvailable(this)
@@ -288,8 +321,11 @@ class WashListenerService : Service() {
                 override fun onResults(bundle: Bundle?) {
                     if (!isCurrent(session)) return
                     val words = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION).orEmpty()
-                    if (WashMatcher.containsAny(words)) {
-                        publish("PALABRA WASH DETECTADA: ${words.firstOrNull().orEmpty()}")
+                    val aliases = WashMatcher.parseAliases(
+                        getSharedPreferences("atena", MODE_PRIVATE).getString("wash_aliases", "").orEmpty()
+                    )
+                    if (WashMatcher.containsAny(words, aliases)) {
+                        publish("WASH DETECTADO (incluye pronunciaciones similares): ${words.firstOrNull().orEmpty()}")
                         pausedForChat = true
                         stopCurrentCapture()  // Liberar micrófono ANTES de abrir ChatGPT.
                         handler.postDelayed({ if (active && pausedForChat) openChatGPT() }, 450)
@@ -310,9 +346,13 @@ class WashListenerService : Service() {
                         publish("Cambiando al modo compatible de Android.")
                     }
                     if (failures >= 12) {
-                        stopCurrentCapture()
-                        publish("Motor de voz falló repetidamente. Pulsa REANUDAR WASH.")
-                        notifyUser("Reconocimiento interrumpido · Reanudar WASH")
+                        // No dejar el servicio muerto: esperar antes de reintentar con el
+                        // motor compatible. Ciclo con pausa para no agotar batería.
+                        mode = MODE_COMPATIBLE
+                        failures = 0
+                        publish("Reconocimiento temporalmente bloqueado; nuevo intento automático en 20 s.")
+                        notifyUser("ATENA esperando motor de voz · reintento automático")
+                        scheduleRestart(20000)
                     } else scheduleRestart(if (failures > 3) 1800 else 600)
                 }
                 override fun onEvent(eventType: Int, params: Bundle?) { }
@@ -330,6 +370,11 @@ class WashListenerService : Service() {
             failures++
             if (mode == MODE_LOCAL) mode = MODE_COMPATIBLE
             if (failures < 12) scheduleRestart(1500)
+            else {
+                failures = 0
+                mode = MODE_COMPATIBLE
+                scheduleRestart(20000)
+            }
         }
     }
 
@@ -406,7 +451,7 @@ class WashListenerService : Service() {
                         publish("La prueba de sonido terminó; comprueba el diagnóstico.")
                     }
                 }
-            }, "atena-v14-meter").apply { isDaemon = true; start() }
+            }, "atena-v15-meter").apply { isDaemon = true; start() }
         } catch (ex: Exception) {
             stopCurrentCapture()
             publish("No se pudo comprobar el micrófono: ${ex.message}")
@@ -426,14 +471,14 @@ class WashListenerService : Service() {
         }
         val canNavigate = WashAccessibilityService.requestOpenSdAndVoice()
         if (canNavigate) {
-            publish("WASH: buscando el chat fijado SD y su control de Voz. Consulta el diagnóstico.")
+            publish("WASH: buscando SD y Voz. Después ATENA volverá a escuchar cuando termine.")
         } else {
             val opened = ChatOpener.open(this)
             publish(if (opened)
                 "ChatGPT abierto, pero falta activar Accesibilidad de ATENA para encontrar SD y pulsar Voz."
                 else "Android impidió abrir ChatGPT. Usa la notificación como alternativa.")
         }
-        notifyUser("WASH → SD → Voz · Reanudar WASH")
+        notifyUser("WASH → SD → Voz · esperando regreso al chat")
     }
 
     private fun stopCurrentCapture() {

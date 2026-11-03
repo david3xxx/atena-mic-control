@@ -37,19 +37,37 @@ class WashAccessibilityService : AccessibilityService() {
     private var lastVoiceObservationAt = 0L
     private var chatWasOnScreen = false
     private var sawActiveVoice = false
-    private var voiceEndRearmPending = false
+    private var voiceButtonPressedAt = 0L
+    private var chatSeenDuringPause = false
+    private var screenAbsentChecks = 0
+    private var readyToSpeakChecks = 0
+
+    /** Comprobación ligera (cada 2.5 s), SOLO mientras ATENA ha cedido el micrófono a ChatGPT. */
+    private val pauseMonitor = object : Runnable {
+        override fun run() {
+            if (!WashListenerService.isWaitingForChat()) return
+            if (getSharedPreferences("atena", MODE_PRIVATE).getBoolean("auto_rearm", true)) {
+                inspectPausedSession()
+            }
+            if (WashListenerService.isWaitingForChat()) handler.postDelayed(this, 2500)
+        }
+    }
 
     private val scan = Runnable { scanWindow() }
     private val rearm = Runnable {
         // Solo reactivar si el usuario habilitó la opción experimental.
         val pref = getSharedPreferences("atena", MODE_PRIVATE)
-        if (pref.getBoolean("auto_rearm", false)) WashListenerService.rearmAfterChatLeft()
+        if (pref.getBoolean("auto_rearm", true)) WashListenerService.rearmAfterChatLeft()
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         current = WeakReference(this)
         report("Accesibilidad lista: ATENA puede buscar SD y solicitar un toque de Voz.")
+        if (WashListenerService.isWaitingForChat()) {
+            handler.removeCallbacks(pauseMonitor)
+            handler.postDelayed(pauseMonitor, 1500)
+        }
     }
 
     private fun report(message: String) {
@@ -63,6 +81,12 @@ class WashAccessibilityService : AccessibilityService() {
 
     private fun beginNavigation() {
         handler.removeCallbacks(scan)
+        handler.removeCallbacks(pauseMonitor)
+        handler.postDelayed(pauseMonitor, 2500)
+        voiceButtonPressedAt = 0L
+        chatSeenDuringPause = false
+        screenAbsentChecks = 0
+        readyToSpeakChecks = 0
         navigating = true
         step = Step.FIND_SD
         started = SystemClock.elapsedRealtime()
@@ -70,7 +94,7 @@ class WashAccessibilityService : AccessibilityService() {
         sidebarOpenedAt = 0L
         sawActiveVoice = false
         // La propia AccessibilityService es la que inicia la actividad cuando es posible.
-        val root = rootInActiveWindow
+        val root = chatRoot()
         if (root?.packageName?.toString() != CHATGPT) {
             report("WASH: abriendo ChatGPT para buscar el chat SD…")
             if (!ChatOpener.open(this)) {
@@ -86,10 +110,69 @@ class WashAccessibilityService : AccessibilityService() {
         handler.postDelayed(scan, delay)
     }
 
-    private fun finish(message: String) {
+    private fun finish(message: String, keepMicReleased: Boolean = false) {
         navigating = false
         handler.removeCallbacks(scan)
         report(message)
+        if (!keepMicReleased && WashListenerService.isWaitingForChat()) {
+            // Si no se logró abrir SD/Voz, NUNCA dejar el disparador WASH pausado.
+            handler.postDelayed({ WashListenerService.rearmAfterChatLeft() }, 1800)
+        }
+    }
+
+    private fun chatRoot(): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow
+        if (root != null) {
+            // No usar una ventana antigua de ChatGPT que quedó detrás de otra aplicación.
+            return root.takeIf { it.packageName?.toString() == CHATGPT }
+        }
+        return windows.firstOrNull { it.isActive }?.root
+            ?.takeIf { it.packageName?.toString() == CHATGPT }
+    }
+
+    /**
+     * No usa audio ni analiza conversaciones. Se limita a comprobar si se ve el botón
+     * que inicia Voz o el cuadro de escribir, y si la interfaz de llamada sigue activa.
+     * Requiere dos observaciones consecutivas para evitar transiciones momentáneas.
+     */
+    private fun inspectPausedSession() {
+        if (navigating) return
+        val root = chatRoot()
+        if (root == null) {
+            readyToSpeakChecks = 0
+            if (WashRearmRules.shouldRearmAfterExit(chatSeenDuringPause, ++screenAbsentChecks)) {
+                report("ChatGPT salió de pantalla; ATENA vuelve a escuchar WASH.")
+                screenAbsentChecks = 0
+                WashListenerService.rearmAfterChatLeft()
+            }
+            return
+        }
+        chatSeenDuringPause = true
+        screenAbsentChecks = 0
+        val inVoice = findNode(root) { SdUiRules.isActiveVoiceIndicator(it) } != null
+        if (inVoice) {
+            sawActiveVoice = true
+            if (voiceButtonPressedAt == 0L) voiceButtonPressedAt =
+                SystemClock.elapsedRealtime() - 5500L // Una llamada ya estaba activa.
+            readyToSpeakChecks = 0
+            return
+        }
+        // Esperar a que haya tiempo de abrir la conversación y mostrar la interfaz de Voz.
+        if (voiceButtonPressedAt == 0L ||
+            SystemClock.elapsedRealtime() - voiceButtonPressedAt < 5500L) return
+        val composerVisible = findNode(root) { SdUiRules.isChatComposer(it) ||
+            SdUiRules.isStartVoiceButton(it) } != null ||
+            findEditableNode(root)
+        if (composerVisible) {
+            readyToSpeakChecks++
+            if (WashRearmRules.isSafeToRearm(
+                    SystemClock.elapsedRealtime() - voiceButtonPressedAt,
+                    inVoice, composerVisible, readyToSpeakChecks)) {
+                readyToSpeakChecks = 0
+                report("Volvió el cuadro de chat; reanudando WASH sin pulsar ChatGPT.")
+                WashListenerService.rearmAfterChatLeft()
+            }
+        } else readyToSpeakChecks = 0
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -100,6 +183,7 @@ class WashAccessibilityService : AccessibilityService() {
         val pkg = event.packageName?.toString().orEmpty()
         if (pkg == CHATGPT) {
             chatWasOnScreen = true
+            if (WashListenerService.isWaitingForChat()) chatSeenDuringPause = true
             handler.removeCallbacks(rearm)
             if (navigating) {
                 // Debounce: las actualizaciones de pantalla suelen llegar en ráfagas.
@@ -108,8 +192,11 @@ class WashAccessibilityService : AccessibilityService() {
                 type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
                 observeVoiceEnd()
             }
-        } else if (pkg != packageName && pkg != "com.android.systemui" && pkg.isNotBlank()) {
-            if (chatWasOnScreen && !navigating) {
+        } else if (pkg != packageName && pkg != "com.android.systemui" && pkg.isNotBlank() &&
+            !pkg.contains("inputmethod", ignoreCase = true) &&
+            !pkg.contains("honeyboard", ignoreCase = true) &&
+            !pkg.contains("keyboard", ignoreCase = true)) {
+            if (chatWasOnScreen && !navigating && chatRoot() == null) {
                 chatWasOnScreen = false
                 handler.removeCallbacks(rearm)
                 handler.postDelayed(rearm, 5000)
@@ -117,27 +204,23 @@ class WashAccessibilityService : AccessibilityService() {
         }
     }
 
-    /** Detectar Voz activa depende de las etiquetas reales, puede no funcionar en toda versión. */
+    /** La transición a chat normal se confirma mediante el monitor, nunca con un solo evento. */
     private fun observeVoiceEnd() {
         val now = SystemClock.elapsedRealtime()
         if (now - lastVoiceObservationAt < 1000) return
         lastVoiceObservationAt = now
-        val root = rootInActiveWindow ?: return
-        if (root.packageName?.toString() != CHATGPT) return
+        val root = chatRoot() ?: return
         val active = findNode(root) { SdUiRules.isActiveVoiceIndicator(it) } != null
         if (active) {
             sawActiveVoice = true
-            voiceEndRearmPending = false
-        } else if (sawActiveVoice && !voiceEndRearmPending) {
-            sawActiveVoice = false
-            voiceEndRearmPending = true
-            handler.postDelayed({
-                voiceEndRearmPending = false
-                if (!navigating) {
-                    report("La interfaz de Voz parece haberse cerrado. Intentando reactivar WASH.")
-                    WashListenerService.rearmAfterChatLeft()
-                }
-            }, 1800)
+            if (voiceButtonPressedAt == 0L) voiceButtonPressedAt =
+                SystemClock.elapsedRealtime() - 5500L
+            readyToSpeakChecks = 0
+        } else if (sawActiveVoice && WashListenerService.isWaitingForChat()) {
+            // Una ausencia momentánea de etiqueta puede producirse durante una respuesta.
+            // Por seguridad, exigir dos sondeos de compositor antes de liberar micrófono.
+            handler.removeCallbacks(pauseMonitor)
+            handler.postDelayed(pauseMonitor, 850)
         }
     }
 
@@ -148,7 +231,7 @@ class WashAccessibilityService : AccessibilityService() {
             finish("Tiempo agotado: no pude confirmar SD y el botón de Voz. No toqué controles desconocidos.")
             return
         }
-        val root = rootInActiveWindow
+        val root = chatRoot()
         if (root?.packageName?.toString() != CHATGPT) {
             schedule(600)
             return
@@ -156,7 +239,9 @@ class WashAccessibilityService : AccessibilityService() {
         // No se interrumpe una sesión de Voz si la interfaz informa que está activa.
         if (findNode(root) { SdUiRules.isActiveVoiceIndicator(it) } != null) {
             sawActiveVoice = true
-            finish("ChatGPT parece tener una llamada de Voz activa. ATENA no la interrumpió.")
+            voiceButtonPressedAt = SystemClock.elapsedRealtime() - 5500L
+            chatSeenDuringPause = true
+            finish("ChatGPT parece tener una llamada de Voz activa. ATENA no la interrumpió.", keepMicReleased = true)
             return
         }
         when (step) {
@@ -196,12 +281,27 @@ class WashAccessibilityService : AccessibilityService() {
     private fun startVoice(root: AccessibilityNodeInfo) {
         val voiceButton = findNode(root) { SdUiRules.isStartVoiceButton(it) }
         if (voiceButton != null && clickNodeOrParent(voiceButton)) {
-            finish("ATENA pulsó el control de Voz del chat SD. Comprueba si ChatGPT empezó a escuchar.")
+            voiceButtonPressedAt = SystemClock.elapsedRealtime()
+            chatSeenDuringPause = true
+            finish("ATENA pulsó Voz en SD. Vigilando el final para reactivar WASH.", keepMicReleased = true)
             return
         }
         if (SystemClock.elapsedRealtime() - started > 13500) {
             finish("Entré al chat SD, pero no encontré un botón de Voz identificable. No pulsé Dictado por error.")
         } else schedule(600)
+    }
+
+    /** Detecta el editor de mensajes aunque cambie su texto de accesibilidad. */
+    private fun findEditableNode(root: AccessibilityNodeInfo): Boolean {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var count = 0
+        while (queue.isNotEmpty() && count++ < 450) {
+            val node = queue.removeFirst()
+            if (node.isVisibleToUser && node.isEditable && node.isEnabled) return true
+            for (i in 0 until node.childCount) node.getChild(i)?.let(queue::addLast)
+        }
+        return false
     }
 
     /** Búsqueda acotada para no recorrer indefinidamente árboles de UI extensos. */
@@ -243,6 +343,7 @@ class WashAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         handler.removeCallbacks(scan)
         handler.removeCallbacks(rearm)
+        handler.removeCallbacks(pauseMonitor)
         if (current.get() === this) current.clear()
         super.onDestroy()
     }
