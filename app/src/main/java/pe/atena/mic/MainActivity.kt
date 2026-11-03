@@ -13,195 +13,188 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.ProgressBar
+import android.widget.CheckBox
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 
-/** V0.8: primero prueba de casilla 16, después reconocimiento y ruta de audio. */
+/** ATENA V1.3: solo activador WASH, diagnóstico de micrófono y apertura de ChatGPT. */
 class MainActivity : Activity() {
-    private lateinit var inputSpinner: Spinner
+    private lateinit var devicesSpinner: Spinner
+    private lateinit var meter: ProgressBar
+    private lateinit var meterText: TextView
     private lateinit var status: TextView
-    private lateinit var soundBar: ProgressBar
-    private lateinit var soundCaption: TextView
-    private var inputs = emptyList<AudioDeviceInfo>()
-    private val receiver = object : BroadcastReceiver() {
+    private lateinit var recognitionMode: Spinner
+    private var inputs: List<AudioDeviceInfo> = emptyList()
+
+    private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == VoiceCaptureService.ACTION_METER) {
-                val level = intent.getIntExtra(VoiceCaptureService.EXTRA_LEVEL, 0).coerceIn(0, 100)
-                soundBar.progress = level
-                val source = intent.getStringExtra(VoiceCaptureService.EXTRA_SOURCE) ?: "Sin fuente"
-                soundCaption.text = "Nivel: $level/100 · $source"
-            } else {
-                intent?.getStringExtra(VoiceCaptureService.EXTRA_MESSAGE)
-                    ?.let { this@MainActivity.report(it) }
+            when (intent?.action) {
+                WashListenerService.ACTION_METER -> {
+                    val level = intent.getIntExtra(WashListenerService.EXTRA_LEVEL, 0).coerceIn(0, 100)
+                    meter.progress = level
+                    val label = intent.getStringExtra(WashListenerService.EXTRA_SOURCE) ?: "Sin fuente confirmada"
+                    meterText.text = "Sonido: $level/100 · $label"
+                }
+                WashListenerService.ACTION_STATUS -> intent.getStringExtra(WashListenerService.EXTRA_MESSAGE)?.let(::report)
             }
         }
     }
 
-    private fun report(message: String) {
-        // Conservar los últimos diagnósticos permite leerlos al volver de otra aplicación.
-        status.text = ("• $message\n" + status.text.toString()).take(3500)
+    private fun report(msg: String) {
+        status.text = ("• $msg\n" + status.text.toString()).take(4800)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val column = LinearLayout(this).apply {
+        val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(28, 28, 28, 28)
+            val p = (18 * resources.displayMetrics.density).toInt()
+            setPadding(p, p, p, p)
         }
-        fun addText(value: String, large: Boolean = false) {
-            column.addView(TextView(this).apply {
-                text = value
-                textSize = if (large) 23f else 16f
-                setPadding(0, 8, 0, 8)
+        fun text(value: String, size: Float = 16f) {
+            col.addView(TextView(this).apply {
+                this.text = value; textSize = size
+                setPadding(0, 9, 0, 9)
             })
         }
-        fun addButton(value: String, onTap: () -> Unit) {
-            column.addView(Button(this).apply { text = value; setOnClickListener { onTap() } })
+        fun button(label: String, callback: () -> Unit) {
+            col.addView(Button(this).apply { this.text = label; setOnClickListener { callback() } })
         }
-        addText("ATENA V1.1 · PATRONES CON CÍRCULOS", true)
-        addText("PRIMERO · Comprueba el micrófono. Habla y mira si se mueve la barra. No necesitas activar la cuadrícula para esta prueba.")
-        inputSpinner = Spinner(this)
-        column.addView(inputSpinner)
-        addButton("ACTUALIZAR MICRÓFONOS") { refreshInputs() }
-        soundBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-            isIndeterminate = false
-            minimumHeight = (14 * resources.displayMetrics.density).toInt()
+        text("ATENA V1.3 · WASH", 24f)
+        text("Di «wash» para intentar abrir ChatGPT. Sin cuadrículas ni patrones. Para iniciar Voz automáticamente, activa «Iniciar con Voz» en los ajustes de ChatGPT (si está disponible).")
+        text("1 · PRUEBA DE MICRÓFONOS", 19f)
+        text("Selecciona el micrófono que quieres comprobar. La prueba de sonido es independiente del reconocimiento de la palabra «wash».")
+        devicesSpinner = Spinner(this)
+        col.addView(devicesSpinner)
+        button("ACTUALIZAR MICRÓFONOS") { refreshDevices() }
+        meter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100; progress = 0; isIndeterminate = false
         }
-        column.addView(soundBar, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, (18 * resources.displayMetrics.density).toInt()
+        col.addView(meter, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (20 * resources.displayMetrics.density).toInt()))
+        meterText = TextView(this).apply { text = "Sonido: 0/100 · Prueba sin iniciar"; textSize = 14f }
+        col.addView(meterText)
+        button("PROBAR MICRÓFONO · VER BARRA") { startServiceMode(WashListenerService.MODE_MONITOR) }
+        button("DETENER PRUEBA") { stopService() }
+        text("2 · ESCUCHA DE «WASH»", 19f)
+        text("El reconocimiento de Android puede usar otro micrófono y puede detenerse en segundo plano. Si falla el modo local, prueba compatible.")
+        recognitionMode = Spinner(this)
+        recognitionMode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf(
+            "Local (preferido; sin conexión si Android lo permite)",
+            "Compatible (motor Android; podría usar Internet)"
         ))
-        soundCaption = TextView(this).apply {
-            text = "Nivel: 0/100 · Prueba sin iniciar"
-            textSize = 14f
-            setPadding(0, 6, 0, 10)
+        col.addView(recognitionMode)
+        button("INICIAR ATENA · ESCUCHAR WASH") {
+            startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
         }
-        column.addView(soundCaption)
-        addButton("PROBAR MICRÓFONO · VER BARRA") { start(VoiceCaptureService.MODE_MONITOR) }
-        addButton("DETENER PRUEBA DE SONIDO") { stopListening() }
-        addText("Esta barra muestra energía del sonido: no asegura que Android entienda palabras. Prueba primero el micrófono del teléfono y después tus auriculares.")
-        addText("SEGUNDO · Prueba la casilla 16. Los números se dicen en español, del uno al dieciséis.")
-        addButton("ABRIR ACCESIBILIDAD") {
+        button("DETENER ATENA") { stopService() }
+        button("ABRIR CHATGPT AHORA · SIN VOZ") {
+            val ok = WashListenerService.openFromMenuIfRunning() || ChatOpener.open(this)
+            report(if (ok) "Se solicitó abrir ChatGPT; ATENA libera su micrófono si estaba escuchando." else
+                "ChatGPT no está instalado o Android rechazó la apertura.")
+        }
+        text("3 · OPCIONAL: PERMISO PARA ABRIR CHATGPT CON MANOS LIBRES", 19f)
+        text("Si Android impide abrir apps desde segundo plano, habilitar Accesibilidad puede ayudar. ATENA no lee contenido ni controla toques. Este permiso es opcional y sensible: actívalo solo si confías en la app.")
+        button("CONFIGURAR ACCESIBILIDAD (OPCIONAL)") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
-        addButton("MOSTRAR CUADRÍCULA") { report(AtenaAccessibilityService.showGrid()) }
-        addButton("1. CASILLA 16 · AMPLIAR") { report(AtenaAccessibilityService.selectCell(16)) }
-        addButton("2. SUBCASILLA 16 · TOCAR") { report(AtenaAccessibilityService.selectCell(16)) }
-        addButton("REINICIAR CUADRÍCULA") { report(AtenaAccessibilityService.restartGrid()) }
-        addButton("OCULTAR CUADRÍCULA") { report(AtenaAccessibilityService.hideGrid()) }
-        addText("PATRONES · Pulsa GRABAR y tendrás exactamente 4 segundos para ir a la pantalla elegida. Aparecerá una capa táctil: marca de 2 a 4 posiciones en orden; cada una se marca con un CÍRCULO AMARILLO. Al terminar toca el CÍRCULO BLANCO (✓) para guardar. El círculo amarillo (×) cancela. Los toques solo se graban: no activan botones durante la captura.")
-        for (slot in 1..3) {
-            addText("PATRÓN $slot · di 'patrón ${listOf("uno", "dos", "tres")[slot - 1]}' para reproducir.")
-            addButton("GRABAR PATRÓN $slot") { report(AtenaAccessibilityService.recordPattern(slot)) }
-            addButton("PROBAR PATRÓN $slot · EJECUTAR EN 6 s") {
-                report(AtenaAccessibilityService.playPattern(slot, delayed = true))
+        val autoRearm = CheckBox(this).apply {
+            text = "Intentar reactivar WASH cuando salga de ChatGPT (experimental)"
+            isChecked = getSharedPreferences("atena", MODE_PRIVATE).getBoolean("auto_rearm", true)
+            setOnCheckedChangeListener { _, checked ->
+                getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("auto_rearm", checked).apply()
+                report(if (checked) "Reactivación experimental activada." else "Reactivación experimental desactivada.")
             }
-            addButton("BORRAR PATRÓN $slot") { report(AtenaAccessibilityService.deletePattern(slot)) }
         }
-        addText("ATENCIÓN: los patrones son coordenadas, no nombres de botones. Úsalos solo en la misma aplicación, orientación y pantalla. No guardes ni ejecutes toques sobre contraseñas, pagos o acciones irreversibles. Para comandos de voz, primero inicia ESCUCHA en MODO COMPATIBLE. Si el motor Android no reconoce voz, la orden verbal tampoco funcionará.")
-        addText("TERCERO · Desactiva temporalmente Google Voice Access al probar ATENA. Para probar reconocimiento, pulsa iniciar escucha y di 'dieciséis', después 'dieciséis'.")
-        addText("PASO 4 · Iniciar la escucha. Primero usa el modo compatible. Ese modo utiliza el reconocimiento habitual de Android y NO garantiza que el audio proceda de los auriculares.")
-        addButton("INICIAR ESCUCHA · MODO COMPATIBLE") { start(VoiceCaptureService.MODE_COMPATIBLE) }
-        addText("Si el modo compatible reconoce 'dieciséis', prueba el modo avanzado. Este comprueba la ruta física del micrófono elegido, pero el motor de voz podría no aceptar el audio externo.")
-        addButton("INICIAR ESCUCHA · MICRÓFONO ELEGIDO (EXPERIMENTAL)") { start(VoiceCaptureService.MODE_ROUTED) }
-        addButton("DETENER ESCUCHA") { stopListening() }
-        addText("DIAGNÓSTICO · Los mensajes más recientes aparecen primero. La cuadrícula también muestra el último estado de ATENA.")
+        col.addView(autoRearm)
+        text("Esta opción requiere el servicio opcional de Accesibilidad. Si ChatGPT sigue hablando en segundo plano, reactivar ATENA puede interferir con el micrófono: desmárcala en ese caso.")
+        text("Cuando ChatGPT esté hablando, ATENA pausa su reconocedor. También puedes volver a escuchar «wash» con «REANUDAR WASH» desde la notificación o al abrir ATENA.")
+        button("REANUDAR ESCUCHA WASH") {
+            startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
+        }
+        text("DIAGNÓSTICO", 19f)
         status = TextView(this).apply {
-            textSize = 15f
-            text = "• ATENA lista. Para patrones, graba entre 2 y 4 puntos con círculos amarillos.\n"
-            setPadding(4, 12, 4, 18)
+            textSize = 14f
+            text = getSharedPreferences("atena", MODE_PRIVATE)
+                .getString("last_status", "• ATENA lista. Prueba primero el sonido.")
+            setPadding(0, 8, 0, 18)
         }
-        column.addView(status)
-        setContentView(ScrollView(this).apply { addView(column) })
-        requestMissingPermissions()
-        refreshInputs()
+        col.addView(status)
+        setContentView(ScrollView(this).apply { addView(col) })
+        permissions()
+        refreshDevices()
     }
 
-    private fun requestMissingPermissions() {
-        val requested = listOf(
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.POST_NOTIFICATIONS,
-            Manifest.permission.BLUETOOTH_CONNECT
-        ).filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (requested.isNotEmpty()) requestPermissions(requested.toTypedArray(), 14)
+    private fun permissions() {
+        val requests = listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.BLUETOOTH_CONNECT)
+            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (requests.isNotEmpty()) requestPermissions(requests.toTypedArray(), 15)
     }
 
-    private fun refreshInputs() {
+    private fun label(device: AudioDeviceInfo): String {
+        val name = when (device.type) {
+            AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Micrófono del teléfono"
+            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Auriculares con cable"
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth (llamadas)"
+            AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE"
+            AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE -> "Micrófono USB"
+            else -> "Entrada de audio"
+        }
+        return "$name · ${device.productName} · ID ${device.id}"
+    }
+
+    private fun refreshDevices() {
         try {
             inputs = getSystemService(AudioManager::class.java)
                 .getDevices(AudioManager.GET_DEVICES_INPUTS).toList()
-            val captions = inputs.map { "${it.productName} · ${deviceLabel(it.type)} · ID ${it.id}" }
-            inputSpinner.adapter = ArrayAdapter(
-                this, android.R.layout.simple_spinner_dropdown_item,
-                if (captions.isEmpty()) listOf("No hay entradas disponibles") else captions
-            )
-            val headset = inputs.indexOfFirst {
-                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-                    it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
-                    it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-                    it.type == AudioDeviceInfo.TYPE_USB_HEADSET
-            }
-            if (headset >= 0) inputSpinner.setSelection(headset)
-            report("Entradas encontradas: ${inputs.size}. Selecciona tus auriculares si aparecen.")
-        } catch (error: Exception) {
-            report("No se pudieron enumerar los micrófonos: ${error.message}")
+            devicesSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
+                inputs.map(::label).ifEmpty { listOf("Sin micrófonos detectados") })
+            val headsetIndex = inputs.indexOfFirst { it.type in listOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADSET) }
+            if (headsetIndex >= 0) devicesSpinner.setSelection(headsetIndex)
+            report("Detectados ${inputs.size} dispositivos de entrada. Selecciona el que quieras probar.")
+        } catch (ex: Exception) {
+            report("Error al consultar micrófonos: ${ex.message}")
         }
     }
 
-    private fun stopListening() {
-        startService(Intent(this, VoiceCaptureService::class.java).apply {
-            action = VoiceCaptureService.ACTION_STOP
-        })
-    }
-
-    private fun deviceLabel(type: Int) = when (type) {
-        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "micrófono del teléfono"
-        AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth (llamadas)"
-        AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE"
-        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "auriculares con cable"
-        AudioDeviceInfo.TYPE_USB_HEADSET -> "auriculares USB"
-        AudioDeviceInfo.TYPE_USB_DEVICE -> "micrófono USB"
-        else -> "entrada tipo $type"
-    }
-
-    private fun start(mode: String) {
+    private fun startServiceMode(mode: String) {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            report("Permiso de micrófono pendiente.")
-            requestMissingPermissions()
-            return
+            report("Falta permiso de micrófono."); permissions(); return
         }
-        val selected = inputs.getOrNull(inputSpinner.selectedItemPosition)
-        if (selected == null) {
-            report("Selecciona primero un micrófono con ACTUALIZAR MICRÓFONOS.")
-            return
-        }
-        val intent = Intent(this, VoiceCaptureService::class.java).apply {
-            action = VoiceCaptureService.ACTION_START
-            putExtra(VoiceCaptureService.EXTRA_INPUT_ID, selected.id)
-            putExtra(VoiceCaptureService.EXTRA_MODE, mode)
+        val device = inputs.getOrNull(devicesSpinner.selectedItemPosition)
+        if (device == null) {
+            report("Actualiza la lista de micrófonos."); return
         }
         try {
-            startForegroundService(intent)
-            report("Inicio solicitado: ${selected.productName}, modo $mode.")
+            startForegroundService(Intent(this, WashListenerService::class.java).apply {
+                action = WashListenerService.ACTION_START
+                putExtra(WashListenerService.EXTRA_MODE, mode)
+                putExtra(WashListenerService.EXTRA_INPUT_ID, device.id)
+            })
+            report("Solicitado: $mode · ${device.productName}")
         } catch (ex: Exception) {
             report("No se pudo iniciar la escucha: ${ex.message}")
         }
     }
 
+    private fun stopService() {
+        startService(Intent(this, WashListenerService::class.java).apply { action = WashListenerService.ACTION_STOP })
+    }
+
     override fun onStart() {
         super.onStart()
         val filter = IntentFilter().apply {
-            addAction(VoiceCaptureService.ACTION_STATUS)
-            addAction(VoiceCaptureService.ACTION_METER)
+            addAction(WashListenerService.ACTION_STATUS)
+            addAction(WashListenerService.ACTION_METER)
         }
-        registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
     }
+
     override fun onStop() {
-        unregisterReceiver(receiver)
+        unregisterReceiver(statusReceiver)
         super.onStop()
     }
 }

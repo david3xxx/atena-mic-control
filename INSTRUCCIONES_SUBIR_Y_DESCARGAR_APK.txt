@@ -1,11 +1,13 @@
-ATENA V1.1 — Grabación por círculos
+ATENA V1.3 WASH — INSTALACIÓN
 
-1) Extrae ZIP en PC.
-2) Ve a https://github.com/david3xxx/atena-mic-control/upload/main
-3) Arrastra el CONTENIDO de la carpeta extraída (no el ZIP) y confirma Commit changes.
-4) Abre https://github.com/david3xxx/atena-mic-control/actions
-5) En el último resultado exitoso (verde), baja hasta Artifacts y descarga el APK comprimido.
-6) Extrae app-debug.apk del ZIP en el celular e instálalo.
-7) Comprueba en la app que dice ATENA V1.1.
+1. Extrae ATENA_V1_3_WASH_FUENTES.zip.
+2. Entra con tu cuenta en https://github.com/david3xxx/atena-mic-control/upload/main
+3. Sube los archivos INTERIORES y conserva sus carpetas (.github, app, etc.). Confirma «Commit changes».
+4. Espera a que termine la acción «ATENA WASH V1.3 · Compilar Android» en https://github.com/david3xxx/atena-mic-control/actions
+5. Abre el último run completado en verde. En «Artifacts» descarga «ATENA-WASH-v1-3-APK».
+6. Extrae app-debug.apk del ZIP descargado desde GitHub e instálalo en el Samsung.
 
-La descarga final desde GitHub requiere que el workflow compile primero.
+La V1.3 reemplaza la interfaz anterior, pero usa el MISMO identificador de aplicación para actualizar V1.1.
+Si el proceso de subida por móvil no conserva carpetas, usa la vista de escritorio o una computadora.
+
+No existe forma externa oficial de garantizar el inicio automático de ChatGPT Voz ni la reconexión de una sesión terminada.

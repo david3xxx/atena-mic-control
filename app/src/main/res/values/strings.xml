@@ -1,3 +1,4 @@
 <resources>
-    <string name="accessibility_description">Permite ejecutar inicio, atrás, notificaciones y desplazamiento mediante órdenes de voz reconocidas por ATENA o botones de prueba. Debes activarlo manualmente.</string>
+    <string name="app_name">ATENA WASH</string>
+    <string name="atena_a11y_description">Permiso opcional para intentar abrir ChatGPT con la voz cuando ATENA está en segundo plano. No graba toques, no lee contenido ni muestra cuadrículas.</string>
 </resources>

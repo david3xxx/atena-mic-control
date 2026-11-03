@@ -11,7 +11,7 @@
         <intent><action android:name="android.speech.RecognitionService" /></intent>
     </queries>
     <application
-        android:label="ATENA Mic Control"
+        android:label="ATENA WASH"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
@@ -21,20 +21,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <service
-            android:name=".VoiceCaptureService"
-            android:exported="false"
+        <service android:name=".WashListenerService" android:exported="false"
             android:foregroundServiceType="microphone" />
-        <service
-            android:name=".AtenaAccessibilityService"
+        <service android:name=".WashAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:exported="true"
-            android:label="ATENA control por voz">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
+            android:label="ATENA · Apertura manos libres (opcional)"
+            android:exported="true">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+            <meta-data android:name="android.accessibilityservice"
                 android:resource="@xml/atena_accessibility" />
         </service>
     </application>
