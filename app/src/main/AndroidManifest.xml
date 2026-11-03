@@ -11,7 +11,7 @@
         <intent><action android:name="android.speech.RecognitionService" /></intent>
     </queries>
     <application
-        android:label="ATENA WASH"
+        android:label="ATENA WASH SD"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
@@ -25,7 +25,7 @@
             android:foregroundServiceType="microphone" />
         <service android:name=".WashAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:label="ATENA · Apertura manos libres (opcional)"
+            android:label="ATENA · Navegación a SD y Voz"
             android:exported="true">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
             <meta-data android:name="android.accessibilityservice"

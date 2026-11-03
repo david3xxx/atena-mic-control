@@ -20,7 +20,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 
-/** ATENA V1.3: solo activador WASH, diagnóstico de micrófono y apertura de ChatGPT. */
+/** ATENA V1.4: WASH → chat fijado SD → control de Voz. Pruebas de micrófono. */
 class MainActivity : Activity() {
     private lateinit var devicesSpinner: Spinner
     private lateinit var meter: ProgressBar
@@ -63,8 +63,8 @@ class MainActivity : Activity() {
         fun button(label: String, callback: () -> Unit) {
             col.addView(Button(this).apply { this.text = label; setOnClickListener { callback() } })
         }
-        text("ATENA V1.3 · WASH", 24f)
-        text("Di «wash» para intentar abrir ChatGPT. Sin cuadrículas ni patrones. Para iniciar Voz automáticamente, activa «Iniciar con Voz» en los ajustes de ChatGPT (si está disponible).")
+        text("ATENA V1.4 · WASH → SD → VOZ", 24f)
+        text("Di «wash» para abrir ChatGPT, buscar tu chat fijado «SD» e intentar pulsar Voz. Necesitas activar el servicio de Accesibilidad de ATENA. La interfaz de ChatGPT puede cambiar.")
         text("1 · PRUEBA DE MICRÓFONOS", 19f)
         text("Selecciona el micrófono que quieres comprobar. La prueba de sonido es independiente del reconocimiento de la palabra «wash».")
         devicesSpinner = Spinner(this)
@@ -90,18 +90,19 @@ class MainActivity : Activity() {
             startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
         }
         button("DETENER ATENA") { stopService() }
-        button("ABRIR CHATGPT AHORA · SIN VOZ") {
-            val ok = WashListenerService.openFromMenuIfRunning() || ChatOpener.open(this)
-            report(if (ok) "Se solicitó abrir ChatGPT; ATENA libera su micrófono si estaba escuchando." else
-                "ChatGPT no está instalado o Android rechazó la apertura.")
+        button("PROBAR AHORA · ABRIR SD Y PULSAR VOZ") {
+            val ok = WashListenerService.openFromMenuIfRunning() ||
+                WashAccessibilityService.requestOpenSdAndVoice()
+            report(if (ok) "ATENA está buscando el chat SD. Revisa los mensajes de diagnóstico." else
+                "Debes habilitar Accesibilidad de ATENA para localizar SD y pulsar Voz.")
         }
-        text("3 · OPCIONAL: PERMISO PARA ABRIR CHATGPT CON MANOS LIBRES", 19f)
-        text("Si Android impide abrir apps desde segundo plano, habilitar Accesibilidad puede ayudar. ATENA no lee contenido ni controla toques. Este permiso es opcional y sensible: actívalo solo si confías en la app.")
-        button("CONFIGURAR ACCESIBILIDAD (OPCIONAL)") {
+        text("3 · ACCESIBILIDAD: NECESARIA PARA ABRIR SD Y PULSAR VOZ", 19f)
+        text("Para buscar SD, ATENA necesita leer los títulos y descripciones accesibles de la interfaz de ChatGPT. Solo intentará pulsar el chat «SD» y el botón de Voz identificado por su etiqueta; no guarda conversaciones ni hace capturas. Es un permiso sensible: habilítalo solo si confías en ATENA.")
+        button("ACTIVAR ACCESIBILIDAD PARA SD Y VOZ") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         val autoRearm = CheckBox(this).apply {
-            text = "Intentar reactivar WASH cuando salga de ChatGPT (experimental)"
+            text = "Reactivar WASH cuando salga de ChatGPT o parezca terminar Voz (experimental)"
             isChecked = getSharedPreferences("atena", MODE_PRIVATE).getBoolean("auto_rearm", true)
             setOnCheckedChangeListener { _, checked ->
                 getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("auto_rearm", checked).apply()
@@ -109,8 +110,8 @@ class MainActivity : Activity() {
             }
         }
         col.addView(autoRearm)
-        text("Esta opción requiere el servicio opcional de Accesibilidad. Si ChatGPT sigue hablando en segundo plano, reactivar ATENA puede interferir con el micrófono: desmárcala en ese caso.")
-        text("Cuando ChatGPT esté hablando, ATENA pausa su reconocedor. También puedes volver a escuchar «wash» con «REANUDAR WASH» desde la notificación o al abrir ATENA.")
+        text("Esta opción depende de que ChatGPT exponga cambios detectables en Accesibilidad. Puede interferir con Voz en segundo plano: desmárcala si ocurre.")
+        text("Tras detectar «wash», ATENA libera el micrófono. Si ChatGPT cambia el nombre del botón de Voz o no muestra SD, ATENA lo indicará sin pulsar puntos desconocidos. La reactivación no es infalible.")
         button("REANUDAR ESCUCHA WASH") {
             startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
         }

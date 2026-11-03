@@ -1,29 +1,50 @@
-# ATENA V1.3 WASH — activación manos libres (prueba experimental)
+# ATENA V1.4 — WASH → chat fijado SD → Voz
 
-La V1.3 reemplaza cuadrículas y patrones por una aplicación simple que escucha la palabra **wash** y solicita abrir la aplicación oficial de **ChatGPT**. Mantiene la lista de micrófonos, una barra de sonido independiente para verificar la ruta física y un diagnóstico visible.
+**Proyecto Android para Samsung Galaxy S23 FE.** Esta versión incorpora la navegación a la conversación fijada **«SD»**, a diferencia del anterior código V1.3 que solo abría ChatGPT. Se entregan **archivos fuente**; no es un APK ya compilado.
 
-## Comportamiento y límites
+## Qué hace
 
-- Primero, en ChatGPT > Configuración > Voz, activar **Iniciar con Voz** (si está disponible) y **Conversaciones en segundo plano**. La opción Iniciar con Voz solo inicia Voz automáticamente cuando se abre un chat nuevo o vacío, no garantiza una sesión que había terminado.
-- Al decir «wash», Android debe reconocer la palabra (acepta variantes «guash», «guás» y similares). ATENA libera su micrófono **antes de intentar abrir ChatGPT**. La conversación activa podrá continuar si ChatGPT todavía la conserva.
-- Android puede bloquear el lanzamiento automático de ChatGPT desde segundo plano. ATENA pone una acción **ABRIR CHATGPT** en la notificación como alternativa. No existe una API pública oficial que permita a ATENA iniciar o reconectar una sesión de Voz de ChatGPT de manera garantizada.
-- El **servicio opcional de Accesibilidad** puede mejorar la posibilidad de abrir ChatGPT desde segundo plano y detectar que ChatGPT dejó el primer plano. **No lee textos de pantalla, no toca botones, no activa Voz ni crea cuadrículas.** Si «Intentar reactivar WASH cuando salga de ChatGPT» está marcado, ATENA intentará recuperar la escucha tras 6.5 s. **Puede interferir con Voz que todavía esté activa en segundo plano**: desactivar esa opción si ocurre.
-- Los motores SpeechRecognizer no están diseñados para permanecer escuchando indefinidamente. El servicio reinicia las sesiones cuando terminan, pero Android, el ahorro de batería, la política de micrófono y otros procesos pueden detener la escucha. **No se ofrece garantía 100 % de disponibilidad**.
-- La prueba de micrófono con barra verifica la **ruta de AudioRecord seleccionada** y no demuestra que SpeechRecognizer reconozca comandos por esa entrada. Android puede utilizar otra fuente para el reconocimiento.
-- La prueba prioriza motor local cuando existe; el modo compatible podría enviar audio al proveedor del reconocimiento. ATENA no contiene servidores, no envía audio a un servidor propio ni almacena grabaciones.
-- No hace autoarranque de micrófono tras reiniciar el teléfono ni tras un cierre forzoso, por las restricciones de Android.
+1. La app ATENA mantiene un servicio de reconocimiento de voz en primer plano mientras Android lo permita. Reconoce **«wash»**, «guash» y variantes concretas en español.
+2. Cuando detecta la palabra, **libera el micrófono** para evitar conflicto con Voz de ChatGPT.
+3. Su servicio de **Accesibilidad** comprueba si ChatGPT ya está en pantalla. Si no está, intenta abrir `com.openai.chatgpt`.
+4. Busca el título **«SD» exactamente**. Si no lo ve, intenta abrir el menú/historial mediante una etiqueta de accesibilidad y vuelve a buscarlo. Cuando lo encuentra, lo selecciona.
+5. Intenta encontrar el control **Voz** por sus etiquetas accesibles (español/inglés) y pulsarlo. Primero usa `ACTION_CLICK`, con gesto en el **mismo elemento identificado** como respaldo.
+6. Si no encuentra «SD» o el control Voz, **se detiene sin pulsar otras zonas** y muestra el motivo. No usa coordenadas inventadas.
 
-## Instalación y prueba
+**No puede garantizar 100 %** que el reconocimiento «wash» permanezca siempre activo, que el botón de voz tenga una etiqueta accesible o que ChatGPT recupere una llamada terminada. La UI de ChatGPT puede cambiar. La ejecución de un gesto tampoco demuestra por sí sola que ChatGPT haya iniciado Voz. Es necesario probarlo en el teléfono.
 
-1. En GitHub `david3xxx/atena-mic-control`, subir el **contenido interior** del ZIP (preservando carpetas y reemplazando los archivos del mismo nombre), rama `main`.
-2. GitHub Actions compilará `ATENA-WASH-v1-3-APK` y generará `app-debug.apk` dentro del artefacto ZIP. Se instala como actualización porque mantiene `applicationId = pe.atena.miccontrol`, con `versionCode = 13`.
-3. Abrir ATENA y conceder micrófono y notificaciones. Probar «PROBAR MICRÓFONO» primero con el teléfono y después con auriculares. Detener la prueba.
-4. Activar **ATENA · Apertura manos libres** en Accesibilidad solo si confías en el proyecto y quieres la mejora opcional en segundo plano.
-5. Pulsar «INICIAR ATENA · ESCUCHAR WASH». Cuando aparezca «ESCUCHANDO», decir «wash» o «guash» y comprobar si se abre ChatGPT. Si el motor local falla, usar compatible.
-6. La aplicación ChatGPT debe estar instalada y configurada. Para recuperar la escucha, usar la notificación «REANUDAR WASH» o la opción experimental de autorreactivación si se sale de ChatGPT.
+## Interfaz y consumo
 
-## Archivos y pruebas
+- **Sin cuadrículas, sin grabación ni reproducción de patrones.** Coffee se encarga de la pantalla; ATENA no modifica esa configuración.
+- Conserva **selección de micrófono**, prueba independiente por `AudioRecord`, **barra de nivel de sonido**, diagnósticos y modo de reconocimiento Android local/compatible.
+- Permite **PROBAR AHORA · ABRIR SD Y PULSAR VOZ** sin depender del reconocimiento «wash».
+- No graba ni almacena audio, capturas de pantalla ni contenido de ChatGPT. Para localizar botones, Accesibilidad examina brevemente los títulos y etiquetas expuestos por la interfaz; este es un permiso sensible y debe ser autorizado por el usuario.
+- No funciona como hotword de bajo consumo por DSP: emplea `SpeechRecognizer` por sesiones sucesivas, por lo que podría consumir batería o ser detenido. El servicio de Accesibilidad solo inspecciona la pantalla en eventos y durante una navegación limitada a unos 16 s.
+- No se reactiva tras un **forzar detención** o reinicio sin intervención del usuario.
 
-Los archivos antiguos de cuadrículas y patrones se han quitado de este paquete fuente. Si ya existen en el repositorio GitHub, subir este proyecto no los eliminará automáticamente de GitHub, pero **no están registrados en AndroidManifest**, por lo que no se ejecutarán ni se mostrarán. Se pueden eliminar después del repositorio para limpieza. `WashMatcherTest` verifica comandos reconocibles y evita coincidencias dentro de palabras.
+## Instalación y pruebas
 
-**Pendiente antes de considerarlo estable:** compilar con Gradle Android y probar en el Samsung Galaxy S23 FE real, especialmente segundo plano, auriculares Bluetooth y modo Voz. La compilación no demuestra disponibilidad 100 % ni apertura automática de Voz.
+1. Sube el **contenido de este ZIP** a `https://github.com/david3xxx/atena-mic-control` en la rama `main`, manteniendo las carpetas y reemplazando archivos. La acción de GitHub compilará el APK `app-debug.apk` dentro del artefacto `ATENA-WASH-SD-v1-4-APK`.
+2. Android `applicationId` sigue siendo `pe.atena.miccontrol` y `versionCode` pasa a **14**, para actualizar una ATENA anterior.
+3. Instala el APK, abre ATENA, concede **Micrófono** y, cuando se solicite, **Notificaciones**.
+4. Activa **ATENA · Navegación a SD y Voz** desde los ajustes de **Accesibilidad**. Este permiso es **obligatorio** para entrar automáticamente en «SD» y pulsar Voz; no lo necesitas para comprobar el nivel de sonido.
+5. Usa **PROBAR MICRÓFONO · VER BARRA** y después **DETENER PRUEBA**. Selecciona teléfono y luego auriculares; comprueba el diagnóstico.
+6. Con tu conversación **«SD» fijada y visible en el historial** de ChatGPT, pulsa **PROBAR AHORA · ABRIR SD Y PULSAR VOZ**. Comprueba que efectivamente entra en SD y se inicia Voz; si falla, anota el mensaje mostrado.
+7. Cuando la prueba manual funcione, pulsa **INICIAR ATENA · ESCUCHAR WASH**, espera «ESCUCHANDO» y di **«wash»**.
+
+### Limitaciones importantes
+
+- Android puede impedir abrir ChatGPT desde segundo plano y/o pausar el reconocimiento. ATENA deja una notificación de respaldo.
+- El modo compatible deja al motor de reconocimiento elegir el micrófono real; **la barra solo certifica la ruta durante la prueba de sonido**, no durante el reconocimiento de «wash».
+- No hay API pública que permita iniciar/reconectar una llamada de voz de ChatGPT de forma garantizada. El toque accesible es un **intento basado en la UI existente**.
+- La detección de Voz activa depende de etiquetas accesibles. ATENA evita tocar si identifica una llamada activa; la opción de reactivación tras salir de ChatGPT es experimental y puede interferir con una llamada en segundo plano.
+- Si ChatGPT modifica la interfaz o el chat no se llama exactamente **SD**, ATENA mostrará error en lugar de tocar botones desconocidos.
+- No se pueden garantizar resultados hasta compilar con GitHub Actions y probar en el Samsung real.
+
+## Archivos
+
+- `app/src/main/java/pe/atena/mic/` — escucha, micrófono, apertura, navegación accesible y reglas.
+- `app/src/test/` — pruebas básicas de palabra «wash» y etiquetas de chat/voz.
+- `.github/workflows/build-apk.yml` — pruebas y compilación Android en GitHub.
+
+Nota: los archivos obsoletos de versiones antiguas que permanezcan en GitHub no son activados por el nuevo `AndroidManifest.xml` (pueden eliminarse posteriormente).

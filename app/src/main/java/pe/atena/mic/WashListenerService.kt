@@ -41,7 +41,7 @@ class WashListenerService : Service() {
         const val MODE_MONITOR = "monitor"
         const val MODE_LOCAL = "local"
         const val MODE_COMPATIBLE = "compatible"
-        private const val CHANNEL_ID = "atena_wash_v13"
+        private const val CHANNEL_ID = "atena_wash_v14"
         private const val NOTIFICATION_ID = 313
         private var current = WeakReference<WashListenerService>(null)
         fun openFromMenuIfRunning(): Boolean {
@@ -406,7 +406,7 @@ class WashListenerService : Service() {
                         publish("La prueba de sonido terminó; comprueba el diagnóstico.")
                     }
                 }
-            }, "atena-v13-meter").apply { isDaemon = true; start() }
+            }, "atena-v14-meter").apply { isDaemon = true; start() }
         } catch (ex: Exception) {
             stopCurrentCapture()
             publish("No se pudo comprobar el micrófono: ${ex.message}")
@@ -418,20 +418,22 @@ class WashListenerService : Service() {
         if (!active) return
         pausedForChat = true
         monitoring = false
-        stopCurrentCapture()
-        val exists = ChatOpener.intent(this) != null
-        if (!exists) {
-            publish("ChatGPT no parece estar instalado. Instala la aplicación oficial.")
-            notifyUser("ChatGPT no instalado")
+        stopCurrentCapture()  // ATENA libera el micrófono para que ChatGPT pueda hablar.
+        if (ChatOpener.intent(this) == null) {
+            publish("ChatGPT no está instalado o no se puede localizar.")
+            notifyUser("ChatGPT no disponible")
             return
         }
-        // El servicio de accesibilidad, si se habilitó, puede tener más posibilidades
-        // de abrir una actividad desde segundo plano; el resultado real depende de Android.
-        val requested = WashAccessibilityService.requestOpenChat() || ChatOpener.open(this)
-        publish(if (requested)
-            "Se solicitó abrir ChatGPT. ATENA pausó su micrófono; no puede garantizar Voz automática."
-            else "Android impidió abrir ChatGPT. Pulsa ABRIR CHATGPT en la notificación.")
-        notifyUser("WASH detectado · Abrir ChatGPT / Reanudar WASH")
+        val canNavigate = WashAccessibilityService.requestOpenSdAndVoice()
+        if (canNavigate) {
+            publish("WASH: buscando el chat fijado SD y su control de Voz. Consulta el diagnóstico.")
+        } else {
+            val opened = ChatOpener.open(this)
+            publish(if (opened)
+                "ChatGPT abierto, pero falta activar Accesibilidad de ATENA para encontrar SD y pulsar Voz."
+                else "Android impidió abrir ChatGPT. Usa la notificación como alternativa.")
+        }
+        notifyUser("WASH → SD → Voz · Reanudar WASH")
     }
 
     private fun stopCurrentCapture() {

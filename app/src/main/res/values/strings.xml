@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">ATENA WASH</string>
-    <string name="atena_a11y_description">Permiso opcional para intentar abrir ChatGPT con la voz cuando ATENA está en segundo plano. No graba toques, no lee contenido ni muestra cuadrículas.</string>
+    <string name="app_name">ATENA WASH SD</string>
+    <string name="atena_a11y_description">ATENA lee títulos y descripciones de la pantalla de ChatGPT para buscar el chat SD y pulsar el botón de Voz. Solo realiza esas acciones, no guarda los textos ni las conversaciones. También observa si ChatGPT sale de pantalla. Permiso sensible: úsalo solo si confías en ATENA.</string>
 </resources>

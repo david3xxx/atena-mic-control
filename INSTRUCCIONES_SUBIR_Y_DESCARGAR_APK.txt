@@ -1,13 +1,15 @@
-ATENA V1.3 WASH — INSTALACIÓN
+ATENA V1.4 - WASH -> SD -> VOZ
 
-1. Extrae ATENA_V1_3_WASH_FUENTES.zip.
-2. Entra con tu cuenta en https://github.com/david3xxx/atena-mic-control/upload/main
-3. Sube los archivos INTERIORES y conserva sus carpetas (.github, app, etc.). Confirma «Commit changes».
-4. Espera a que termine la acción «ATENA WASH V1.3 · Compilar Android» en https://github.com/david3xxx/atena-mic-control/actions
-5. Abre el último run completado en verde. En «Artifacts» descarga «ATENA-WASH-v1-3-APK».
-6. Extrae app-debug.apk del ZIP descargado desde GitHub e instálalo en el Samsung.
+Este ZIP contiene archivos fuente, NO un APK instalable.
 
-La V1.3 reemplaza la interfaz anterior, pero usa el MISMO identificador de aplicación para actualizar V1.1.
-Si el proceso de subida por móvil no conserva carpetas, usa la vista de escritorio o una computadora.
+1. En GitHub abre https://github.com/david3xxx/atena-mic-control
+2. Sube todos los archivos del interior de este ZIP a main, conservando carpetas.
+3. Pulsa Commit changes.
+4. Abre Actions y espera a que termine la ejecucion de Compilar Android.
+5. En Artifacts, descarga ATENA-WASH-SD-v1-4-APK.
+6. Extrae app-debug.apk del ZIP y abrelo en el Samsung para instalar.
+7. Activa Accesibilidad de ATENA para que pueda buscar SD y pulsar Voz.
+8. Primero prueba el boton PROBAR AHORA - ABRIR SD Y PULSAR VOZ.
+9. Despues inicia la escucha y di wash.
 
-No existe forma externa oficial de garantizar el inicio automático de ChatGPT Voz ni la reconexión de una sesión terminada.
+El exito de compilacion NO garantiza el funcionamiento de la interfaz de ChatGPT.
