@@ -5,9 +5,17 @@ import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.lang.ref.WeakReference
@@ -22,11 +30,16 @@ class WashAccessibilityService : AccessibilityService() {
         private const val CHATGPT = "com.openai.chatgpt"
         private var current = WeakReference<WashAccessibilityService>(null)
         fun requestOpenSdAndVoice(): Boolean = current.get()?.let {
-            it.handler.post { it.beginNavigation() }; true
+            it.handler.post { it.beginNavigation(calibrate = false) }; true
+        } ?: false
+
+        /** La calibración captura exactamente un toque en una superposición temporal. */
+        fun requestVoiceCalibration(): Boolean = current.get()?.let {
+            it.handler.post { it.beginNavigation(calibrate = true) }; true
         } ?: false
     }
 
-    private enum class Step { FIND_SD, START_VOICE }
+    private enum class Step { FIND_SD, START_VOICE, VERIFY_VOICE }
     private val handler = Handler(Looper.getMainLooper())
     private var navigating = false
     private var step = Step.FIND_SD
@@ -41,6 +54,11 @@ class WashAccessibilityService : AccessibilityService() {
     private var chatSeenDuringPause = false
     private var screenAbsentChecks = 0
     private var readyToSpeakChecks = 0
+    private var calibrating = false
+    private var calibrationOverlay: View? = null
+    private var stepStartedAt = 0L
+    private var attemptedSavedTap = false
+    private var voiceAttemptOrigin = ""
 
     /** Comprobación ligera (cada 2.5 s), SOLO mientras ATENA ha cedido el micrófono a ChatGPT. */
     private val pauseMonitor = object : Runnable {
@@ -71,15 +89,18 @@ class WashAccessibilityService : AccessibilityService() {
     }
 
     private fun report(message: String) {
-        getSharedPreferences("atena", MODE_PRIVATE).edit()
-            .putString("last_status", "• $message").apply()
+        AtenaDiagnostics.append(this, message)
         sendBroadcast(Intent(WashListenerService.ACTION_STATUS).apply {
             setPackage(packageName)
             putExtra(WashListenerService.EXTRA_MESSAGE, message)
         })
     }
 
-    private fun beginNavigation() {
+    private fun beginNavigation(calibrate: Boolean) {
+        clearCalibrationOverlay()
+        calibrating = calibrate
+        attemptedSavedTap = false
+        voiceAttemptOrigin = ""
         handler.removeCallbacks(scan)
         handler.removeCallbacks(pauseMonitor)
         handler.postDelayed(pauseMonitor, 2500)
@@ -90,6 +111,7 @@ class WashAccessibilityService : AccessibilityService() {
         navigating = true
         step = Step.FIND_SD
         started = SystemClock.elapsedRealtime()
+        stepStartedAt = started
         sidebarAttempted = false
         sidebarOpenedAt = 0L
         sawActiveVoice = false
@@ -113,6 +135,8 @@ class WashAccessibilityService : AccessibilityService() {
     private fun finish(message: String, keepMicReleased: Boolean = false) {
         navigating = false
         handler.removeCallbacks(scan)
+        clearCalibrationOverlay()
+        calibrating = false
         report(message)
         if (!keepMicReleased && WashListenerService.isWaitingForChat()) {
             // Si no se logró abrir SD/Voz, NUNCA dejar el disparador WASH pausado.
@@ -121,13 +145,13 @@ class WashAccessibilityService : AccessibilityService() {
     }
 
     private fun chatRoot(): AccessibilityNodeInfo? {
+        // En algunos Samsung el foco pasa temporalmente al teclado o un diálogo;
+        // comprobar ventanas activas/enfocadas sin escoger una ventana antigua de fondo.
         val root = rootInActiveWindow
-        if (root != null) {
-            // No usar una ventana antigua de ChatGPT que quedó detrás de otra aplicación.
-            return root.takeIf { it.packageName?.toString() == CHATGPT }
-        }
-        return windows.firstOrNull { it.isActive }?.root
-            ?.takeIf { it.packageName?.toString() == CHATGPT }
+        if (root?.packageName?.toString() == CHATGPT) return root
+        return windows.firstOrNull { it.isActive && it.root?.packageName?.toString() == CHATGPT }
+            ?.root ?: windows.firstOrNull { it.isFocused &&
+                it.root?.packageName?.toString() == CHATGPT }?.root
     }
 
     /**
@@ -227,7 +251,7 @@ class WashAccessibilityService : AccessibilityService() {
     private fun scanWindow() {
         if (!navigating) return
         lastScanAt = SystemClock.elapsedRealtime()
-        if (lastScanAt - started > 16500) {
+        if (lastScanAt - started > 12500) {
             finish("Tiempo agotado: no pude confirmar SD y el botón de Voz. No toqué controles desconocidos.")
             return
         }
@@ -247,48 +271,218 @@ class WashAccessibilityService : AccessibilityService() {
         when (step) {
             Step.FIND_SD -> findSd(root)
             Step.START_VOICE -> startVoice(root)
+            Step.VERIFY_VOICE -> verifyVoiceStarted(root)
         }
     }
 
+    private fun composerVisible(root: AccessibilityNodeInfo): Boolean =
+        findNode(root) { SdUiRules.isChatComposer(it) } != null || findEditableNode(root)
+
     private fun findSd(root: AccessibilityNodeInfo) {
         val sd = findNode(root) { SdUiRules.isSdTitle(it) }
-        if (sd != null && clickNodeOrParent(sd)) {
-            step = Step.START_VOICE
-            report("Chat SD seleccionado. Buscando el botón para iniciar Voz…")
-            schedule(900)
-            return
+        val pinnedSectionOpen = findNode(root) { SdUiRules.isPinnedHeading(it) } != null
+        if (sd != null) {
+            // En la cabecera del chat SD, el compositor está disponible; no abrir el menú otra vez.
+            // Si la barra lateral está abierta, el elemento SD suele estar en una lista sin editor.
+            if (!pinnedSectionOpen && !sidebarAttempted && composerVisible(root)) {
+                step = Step.START_VOICE
+                stepStartedAt = SystemClock.elapsedRealtime()
+                report("Chat SD ya visible: omitiendo búsqueda repetida. Buscando Voz…")
+                schedule(180)
+                return
+            }
+            if (clickNodeOrParent(sd)) {
+                step = Step.START_VOICE
+                stepStartedAt = SystemClock.elapsedRealtime()
+                report("Toque solicitado en SD. Comprobando botón de Voz…")
+                schedule(320)
+                return
+            }
         }
         if (!sidebarAttempted) {
             val menu = findNode(root) { SdUiRules.isNavigationButton(it) }
             if (menu != null && clickNodeOrParent(menu)) {
                 sidebarAttempted = true
                 sidebarOpenedAt = SystemClock.elapsedRealtime()
-                report("Abriendo historial de ChatGPT para buscar el chat fijado SD…")
-                schedule(850)
+                report("Abriendo barra lateral para buscar SD…")
+                schedule(380)
                 return
             }
-            // Algunas versiones no exponen el botón del menú a Accesibilidad.
-            // No se usan toques ciegos en pantalla.
             sidebarAttempted = true
             sidebarOpenedAt = SystemClock.elapsedRealtime()
-            report("No encontré un botón de historial identificable. Buscando SD en pantalla…")
+            report("No se identificó el menú de chats; buscando SD en elementos accesibles…")
         }
-        if (SystemClock.elapsedRealtime() - sidebarOpenedAt > 6000) {
-            finish("No pude localizar el chat fijado «SD». Abre el historial y revisa que su nombre sea exactamente SD.")
-        } else schedule(650)
+        if (SystemClock.elapsedRealtime() - sidebarOpenedAt > 4700) {
+            finish("ETAPA SD: no localicé SD ni el botón del menú. Verifica Accesibilidad y captura el diagnóstico.")
+        } else schedule(420)
+    }
+
+    /** Solo concluir que se inició Voz cuando cambia la interfaz, no por pulsar un botón. */
+    private fun verifyVoiceStarted(root: AccessibilityNodeInfo) {
+        val elapsed = SystemClock.elapsedRealtime() - voiceButtonPressedAt
+        val voiceActive = findNode(root) { SdUiRules.isActiveVoiceIndicator(it) } != null
+        if (voiceActive) {
+            sawActiveVoice = true
+            finish("ETAPA VOZ: interfaz de llamada detectada ($voiceAttemptOrigin).", keepMicReleased = true)
+            return
+        }
+        // Si desapareció el cuadro para escribir y pasó el cambio de pantalla, probablemente
+        // comenzó la conversación; no interferimos mientras esperamos reconfirmación.
+        if (VoiceFlowRules.likelyStarted(elapsed, false, composerVisible(root))) {
+            finish("ETAPA VOZ: desapareció el cuadro de escribir; parece abierta ($voiceAttemptOrigin).", keepMicReleased = true)
+            return
+        }
+        // El primer toque puede no abrir Voz si ChatGPT cambió las etiquetas accesibles.
+        // Segundo método: posición que el usuario calibró previamente, no una estimación.
+        if (VoiceFlowRules.retryCalibratedTap(elapsed, composerVisible(root), attemptedSavedTap)) {
+            attemptedSavedTap = true
+            if (tapCalibratedVoice()) return
+        }
+        if (VoiceFlowRules.timedOut(elapsed)) {
+            finish("ETAPA VOZ: el chat sigue mostrando la barra de escritura tras el toque. Calibra el botón Voz.")
+        } else schedule(300)
     }
 
     private fun startVoice(root: AccessibilityNodeInfo) {
+        if (calibrating) {
+            if (composerVisible(root)) showCalibrationOverlay()
+            else if (SystemClock.elapsedRealtime() - stepStartedAt > 3500L)
+                finish("CALIBRACIÓN: no apareció el cuadro del chat SD. Abre SD y vuelve a intentar.")
+            else schedule(250)
+            return
+        }
         val voiceButton = findNode(root) { SdUiRules.isStartVoiceButton(it) }
         if (voiceButton != null && clickNodeOrParent(voiceButton)) {
             voiceButtonPressedAt = SystemClock.elapsedRealtime()
             chatSeenDuringPause = true
-            finish("ATENA pulsó Voz en SD. Vigilando el final para reactivar WASH.", keepMicReleased = true)
+            voiceAttemptOrigin = "botón accesible"
+            step = Step.VERIFY_VOICE
+            report("ETAPA VOZ: toque enviado; confirmando que se abra la llamada…")
+            schedule(450)
             return
         }
-        if (SystemClock.elapsedRealtime() - started > 13500) {
-            finish("Entré al chat SD, pero no encontré un botón de Voz identificable. No pulsé Dictado por error.")
-        } else schedule(600)
+        val elapsed = SystemClock.elapsedRealtime() - stepStartedAt
+        // Reducimos de 1.2s a 0.5s la espera si el botón ya fue calibrado.
+        if (VoiceFlowRules.useSavedPosition(elapsed, composerVisible(root), attemptedSavedTap)) {
+            attemptedSavedTap = true
+            if (tapCalibratedVoice()) return
+        }
+        if (VoiceFlowRules.timedOut(elapsed)) {
+            finish("ETAPA VOZ: no se identifica el botón. Usa CALIBRAR BOTÓN VOZ una vez.")
+        } else schedule(250)
+    }
+
+    /** El usuario elige la posición. No pulsar coordenadas predeterminadas o adivinadas. */
+    private fun tapCalibratedVoice(): Boolean {
+        val preferences = getSharedPreferences("atena", MODE_PRIVATE)
+        if (!preferences.getBoolean("voice_calibrated", false)) return false
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val bounds = wm.currentWindowMetrics.bounds
+        if (preferences.getInt("voice_orientation", -1) != resources.configuration.orientation) {
+            report("Calibración guardada para otra orientación: no se utilizará.")
+            return false
+        }
+        val xFraction = preferences.getFloat("voice_fraction_x", -1f)
+        val yFraction = preferences.getFloat("voice_fraction_y", -1f)
+        if (xFraction !in 0.03f..0.97f || yFraction !in 0.12f..0.97f) {
+            report("Coordenadas calibradas inválidas; se ignoran por seguridad.")
+            return false
+        }
+        val x = bounds.left + bounds.width() * xFraction
+        val y = bounds.top + bounds.height() * yFraction
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder().addStroke(
+            GestureDescription.StrokeDescription(path, 0, 75)).build()
+        val submitted = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                voiceButtonPressedAt = SystemClock.elapsedRealtime()
+                chatSeenDuringPause = true
+                voiceAttemptOrigin = "posición calibrada"
+                step = Step.VERIFY_VOICE
+                report("ETAPA VOZ: toque calibrado completado. Verificando inicio…")
+                schedule(500)
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                if (navigating) finish("ETAPA VOZ: Android canceló la pulsación calibrada.")
+            }
+        }, null)
+        if (!submitted) {
+            report("ETAPA VOZ: Android rechazó la pulsación calibrada.")
+        } else {
+            report("ETAPA VOZ: solicitando pulsación calibrada…")
+            // Esperar callback de Android, evitando una segunda pulsación sobre el mismo control.
+            handler.removeCallbacks(scan)
+        }
+        return submitted
+    }
+
+    private fun showCalibrationOverlay() {
+        if (calibrationOverlay != null) return
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val density = resources.displayMetrics.density
+        val v = object : View(this) {
+            private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            override fun onDraw(canvas: Canvas) {
+                canvas.drawColor(Color.argb(24, 0, 0, 0))
+                paint.color = Color.argb(240, 18, 32, 49)
+                canvas.drawRect(0f, 0f, width.toFloat(), 100f * density, paint)
+                paint.color = Color.WHITE
+                paint.textSize = 16f * density
+                paint.isFakeBoldText = true
+                canvas.drawText("TOCA EL BOTÓN VOZ DE CHATGPT", 12f*density, 37f*density, paint)
+                paint.textSize = 12f*density
+                paint.isFakeBoldText = false
+                canvas.drawText("Arriba: cancelar. El toque se guarda, no se ejecuta.",
+                    12f*density, 65f*density, paint)
+            }
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) return true
+                if (event.actionMasked != MotionEvent.ACTION_UP) return true
+                if (event.y < 100f * density) {
+                    finish("Calibración cancelada.")
+                    return true
+                }
+                val bounds = wm.currentWindowMetrics.bounds
+                if (bounds.width() <= 0 || bounds.height() <= 0) {
+                    finish("Calibración falló: pantalla sin tamaño válido.")
+                    return true
+                }
+                val fx = (event.rawX - bounds.left) / bounds.width()
+                val fy = (event.rawY - bounds.top) / bounds.height()
+                if (fx !in 0.03f..0.97f || fy !in 0.12f..0.97f) {
+                    report("Toque fuera del área permitida. Vuelve a tocar el botón Voz.")
+                    return true
+                }
+                getSharedPreferences("atena", MODE_PRIVATE).edit()
+                    .putBoolean("voice_calibrated", true)
+                    .putFloat("voice_fraction_x", fx)
+                    .putFloat("voice_fraction_y", fy)
+                    .putInt("voice_orientation", resources.configuration.orientation).apply()
+                finish("Botón de Voz calibrado. Ahora usa PROBAR AHORA para comprobarlo.")
+                return true
+            }
+        }
+        val params = WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.START }
+        try {
+            wm.addView(v, params)
+            calibrationOverlay = v
+            report("CALIBRACIÓN: toca exactamente el botón Voz que ves en el chat SD.")
+        } catch (ex: Exception) {
+            finish("No se pudo mostrar calibración: ${ex.message}")
+        }
+    }
+
+    private fun clearCalibrationOverlay() {
+        calibrationOverlay?.let {
+            try { (getSystemService(WINDOW_SERVICE) as WindowManager).removeView(it) }
+            catch (_: Exception) { }
+        }
+        calibrationOverlay = null
     }
 
     /** Detecta el editor de mensajes aunque cambie su texto de accesibilidad. */
@@ -344,6 +538,7 @@ class WashAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(scan)
         handler.removeCallbacks(rearm)
         handler.removeCallbacks(pauseMonitor)
+        clearCalibrationOverlay()
         if (current.get() === this) current.clear()
         super.onDestroy()
     }

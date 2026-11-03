@@ -145,7 +145,7 @@ class WashListenerService : Service() {
     }
 
     private fun publish(msg: String) {
-        getSharedPreferences("atena", MODE_PRIVATE).edit().putString("last_status", "• $msg").apply()
+        AtenaDiagnostics.append(this, msg)
         sendBroadcast(Intent(ACTION_STATUS).apply {
             setPackage(packageName)
             putExtra(EXTRA_MESSAGE, msg)

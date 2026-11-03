@@ -3,6 +3,8 @@ package pe.atena.mic
 import android.Manifest
 import android.app.Activity
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -21,7 +23,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 
-/** ATENA V1.5: WASH → chat fijado SD → control de Voz. Pruebas de micrófono. */
+/** ATENA V1.6: WASH → chat fijado SD → control de Voz. Pruebas de micrófono. */
 class MainActivity : Activity() {
     private lateinit var devicesSpinner: Spinner
     private lateinit var meter: ProgressBar
@@ -64,7 +66,7 @@ class MainActivity : Activity() {
         fun button(label: String, callback: () -> Unit) {
             col.addView(Button(this).apply { this.text = label; setOnClickListener { callback() } })
         }
-        text("ATENA V1.5 · WASH → SD → VOZ", 24f)
+        text("ATENA V1.6 · WASH → SD → VOZ", 24f)
         text("Di «wash» para abrir ChatGPT, buscar tu chat fijado «SD» e intentar pulsar Voz. Necesitas activar el servicio de Accesibilidad de ATENA. La interfaz de ChatGPT puede cambiar.")
         text("1 · PRUEBA DE MICRÓFONOS", 19f)
         text("Selecciona el micrófono que quieres comprobar. La prueba de sonido es independiente del reconocimiento de la palabra «wash».")
@@ -110,6 +112,12 @@ class MainActivity : Activity() {
             report(if (ok) "ATENA está buscando el chat SD. Revisa los mensajes de diagnóstico." else
                 "Debes habilitar Accesibilidad de ATENA para localizar SD y pulsar Voz.")
         }
+        button("CALIBRAR BOTÓN VOZ (SI LA BÚSQUEDA AUTOMÁTICA FALLA)") {
+            val ok = WashAccessibilityService.requestVoiceCalibration()
+            report(if (ok) "ATENA abrirá SD; cuando aparezca la instrucción, toca el botón de Voz una vez."
+                else "Activa el servicio de Accesibilidad de ATENA antes de calibrar.")
+        }
+        text("La calibración guarda una sola posición elegida por ti y no pulsa el botón durante el registro. Se usa únicamente si la etiqueta accesible de Voz no aparece. Recalibra si cambia el diseño o la orientación.", 14f)
         text("3 · ACCESIBILIDAD: NECESARIA PARA ABRIR SD Y PULSAR VOZ", 19f)
         text("Para buscar SD, ATENA necesita leer los títulos y descripciones accesibles de la interfaz de ChatGPT. Solo intentará pulsar el chat «SD» y el botón de Voz identificado por su etiqueta; no guarda conversaciones ni hace capturas. Es un permiso sensible: habilítalo solo si confías en ATENA.")
         button("ACTIVAR ACCESIBILIDAD PARA SD Y VOZ") {
@@ -129,7 +137,7 @@ class MainActivity : Activity() {
             getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("auto_rearm", true).apply()
         }
         text("Esta opción depende de que ChatGPT exponga cambios detectables en Accesibilidad. Puede interferir con Voz en segundo plano: desmárcala si ocurre.")
-        text("V1.5: al salir de ChatGPT o cuando reaparece el cuadro para escribir, ATENA reintenta escuchar «wash». Durante una llamada de Voz mantiene liberado el micrófono; reactivarlo al finalizar es experimental.")
+        text("V1.6: al salir de ChatGPT o cuando reaparece el cuadro para escribir, ATENA reintenta escuchar «wash». Durante una llamada de Voz mantiene liberado el micrófono; reactivarlo al finalizar es experimental.")
         text("Tras detectar «wash», ATENA libera el micrófono. Si ChatGPT cambia el nombre del botón de Voz o no muestra SD, ATENA lo indicará sin pulsar puntos desconocidos. La reactivación no es infalible.")
         button("REANUDAR ESCUCHA WASH") {
             startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
@@ -138,13 +146,31 @@ class MainActivity : Activity() {
         status = TextView(this).apply {
             textSize = 14f
             text = getSharedPreferences("atena", MODE_PRIVATE)
-                .getString("last_status", "• ATENA lista. Prueba primero el sonido.")
+                .getString("diagnostic_history", "• ATENA lista. Prueba primero el sonido.")
             setPadding(0, 8, 0, 18)
         }
         col.addView(status)
+        button("ACTUALIZAR DIAGNÓSTICO") { loadDiagnostics() }
+        button("COPIAR DIAGNÓSTICO") {
+            val history = getSharedPreferences("atena", MODE_PRIVATE)
+                .getString("diagnostic_history", "(sin eventos)").orEmpty()
+            getSystemService(ClipboardManager::class.java)
+                .setPrimaryClip(ClipData.newPlainText("ATENA diagnóstico", history))
+            report("Diagnóstico copiado; puedes pegarlo en nuestro chat.")
+        }
         setContentView(ScrollView(this).apply { addView(col) })
         permissions()
         refreshDevices()
+    }
+
+    private fun loadDiagnostics() {
+        status.text = getSharedPreferences("atena", MODE_PRIVATE)
+            .getString("diagnostic_history", "(sin eventos)")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::status.isInitialized) loadDiagnostics()
     }
 
     private fun permissions() {

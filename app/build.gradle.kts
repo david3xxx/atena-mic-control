@@ -6,8 +6,8 @@ android {
         applicationId = "pe.atena.miccontrol"
         minSdk = 33
         targetSdk = 35
-        versionCode = 15
-        versionName = "1.5-wash-rearme-continuo"
+        versionCode = 16
+        versionName = "1.6-wash-voz-calibrable"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

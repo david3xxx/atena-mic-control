@@ -1,0 +1,11 @@
+APROBADA | 1 Reconoce Wash
+APROBADA | 2 Reconoce variantes
+APROBADA | 3 Evita coincidencias falsas
+APROBADA | 4 Identifica SD exactamente
+APROBADA | 5 Evita confundir Voz con Dictado
+APROBADA | 6 No rearma durante Voz activa
+APROBADA | 7 Rearma tras volver al chat
+APROBADA | 8 Si la barra sigue visible, no confirma inicio de Voz
+APROBADA | 9 Reintenta con calibraci?n sin repetir dos veces
+APROBADA | 10 Usa coordenadas solo al estabilizar y detiene intentos agotados
+TOTAL: 10/10 simulaciones de reglas (JVM)

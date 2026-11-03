@@ -11,6 +11,11 @@ class SdUiRulesTest {
         assertFalse(SdUiRules.isSdTitle("Mi chat SD"))
         assertFalse(SdUiRules.isSdTitle("ChatGPT"))
     }
+    @Test fun pinnedSectionIsNotChatTitle() {
+        assertTrue(SdUiRules.isPinnedHeading("Fijados"))
+        assertTrue(SdUiRules.isPinnedHeading("Pinned"))
+        assertFalse(SdUiRules.isPinnedHeading("SD"))
+    }
     @Test fun sidebarSpanishAndEnglish() {
         assertTrue(SdUiRules.isNavigationButton("Abrir barra lateral"))
         assertTrue(SdUiRules.isNavigationButton("Open sidebar"))
