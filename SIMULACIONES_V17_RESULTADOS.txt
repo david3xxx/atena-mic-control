@@ -1,0 +1,8 @@
+APROBADO | 1: ChatGPT aparece - UNO
+APROBADO | 2: SD abierto - DOS
+APROBADO | 3: voz confirmada - TRES
+APROBADO | 4: nunca anunciar TRES antes de DOS
+APROBADO | 5: eventos duplicados no repiten n?meros
+APROBADO | 6: segundo WASH vuelve a decir UNO DOS TRES
+APROBADO | 7: d?cimo WASH tambi?n funciona
+APROBADO | 8: rechaza estados inesperados

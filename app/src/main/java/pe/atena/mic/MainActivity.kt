@@ -23,7 +23,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 
-/** ATENA V1.6: WASH → chat fijado SD → control de Voz. Pruebas de micrófono. */
+/** ATENA V1.7: WASH → chat fijado SD → control de Voz. Pruebas de micrófono. */
 class MainActivity : Activity() {
     private lateinit var devicesSpinner: Spinner
     private lateinit var meter: ProgressBar
@@ -66,7 +66,8 @@ class MainActivity : Activity() {
         fun button(label: String, callback: () -> Unit) {
             col.addView(Button(this).apply { this.text = label; setOnClickListener { callback() } })
         }
-        text("ATENA V1.6 · WASH → SD → VOZ", 24f)
+        text("ATENA V1.7 · WASH → SD → VOZ · AVISOS 1·2·3", 24f)
+        text("Avisos hablados: UNO cuando ChatGPT está visible; DOS cuando se confirma SD; TRES cuando se detecta una pantalla de Voz activa. Cada número se dice solo una vez por activación. Si no hay confirmación, no anuncia ese paso.")
         text("Di «wash» para abrir ChatGPT, buscar tu chat fijado «SD» e intentar pulsar Voz. Necesitas activar el servicio de Accesibilidad de ATENA. La interfaz de ChatGPT puede cambiar.")
         text("1 · PRUEBA DE MICRÓFONOS", 19f)
         text("Selecciona el micrófono que quieres comprobar. La prueba de sonido es independiente del reconocimiento de la palabra «wash».")
@@ -137,7 +138,7 @@ class MainActivity : Activity() {
             getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("auto_rearm", true).apply()
         }
         text("Esta opción depende de que ChatGPT exponga cambios detectables en Accesibilidad. Puede interferir con Voz en segundo plano: desmárcala si ocurre.")
-        text("V1.6: al salir de ChatGPT o cuando reaparece el cuadro para escribir, ATENA reintenta escuchar «wash». Durante una llamada de Voz mantiene liberado el micrófono; reactivarlo al finalizar es experimental.")
+        text("V1.7: al salir de ChatGPT o cuando reaparece el cuadro para escribir, ATENA reintenta escuchar «wash». Durante una llamada de Voz mantiene liberado el micrófono; reactivarlo al finalizar es experimental.")
         text("Tras detectar «wash», ATENA libera el micrófono. Si ChatGPT cambia el nombre del botón de Voz o no muestra SD, ATENA lo indicará sin pulsar puntos desconocidos. La reactivación no es infalible.")
         button("REANUDAR ESCUCHA WASH") {
             startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)

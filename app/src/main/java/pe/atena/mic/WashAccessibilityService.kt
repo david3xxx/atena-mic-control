@@ -59,6 +59,17 @@ class WashAccessibilityService : AccessibilityService() {
     private var stepStartedAt = 0L
     private var attemptedSavedTap = false
     private var voiceAttemptOrigin = ""
+    private val milestones = VoiceMilestones()
+    private var speaker: StepSpeaker? = null
+    private var sdChosenForThisRun = false
+
+    /** Numeros de confirmacion por voz, nunca solo por una solicitud de abrir/tocar. */
+    private fun confirmStage(stage: Int, description: String) {
+        if (milestones.confirm(stage)) {
+            report("PASO $stage CONFIRMADO: $description")
+            speaker?.speak(stage)
+        }
+    }
 
     /** Comprobación ligera (cada 2.5 s), SOLO mientras ATENA ha cedido el micrófono a ChatGPT. */
     private val pauseMonitor = object : Runnable {
@@ -81,6 +92,7 @@ class WashAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         current = WeakReference(this)
+        speaker = StepSpeaker(this) { problem -> report(problem) }
         report("Accesibilidad lista: ATENA puede buscar SD y solicitar un toque de Voz.")
         if (WashListenerService.isWaitingForChat()) {
             handler.removeCallbacks(pauseMonitor)
@@ -101,6 +113,10 @@ class WashAccessibilityService : AccessibilityService() {
         calibrating = calibrate
         attemptedSavedTap = false
         voiceAttemptOrigin = ""
+        sdChosenForThisRun = false
+        milestones.reset()
+        // Los números se pronuncian solo al confirmar cada paso de ESTE intento.
+        speaker?.cancelPending()
         handler.removeCallbacks(scan)
         handler.removeCallbacks(pauseMonitor)
         handler.postDelayed(pauseMonitor, 2500)
@@ -117,6 +133,9 @@ class WashAccessibilityService : AccessibilityService() {
         sawActiveVoice = false
         // La propia AccessibilityService es la que inicia la actividad cuando es posible.
         val root = chatRoot()
+        if (root?.packageName?.toString() == CHATGPT) {
+            confirmStage(1, "ChatGPT ya está visible")
+        }
         if (root?.packageName?.toString() != CHATGPT) {
             report("WASH: abriendo ChatGPT para buscar el chat SD…")
             if (!ChatOpener.open(this)) {
@@ -260,11 +279,14 @@ class WashAccessibilityService : AccessibilityService() {
             schedule(600)
             return
         }
+        confirmStage(1, "ChatGPT abierto y visible")
         // No se interrumpe una sesión de Voz si la interfaz informa que está activa.
         if (findNode(root) { SdUiRules.isActiveVoiceIndicator(it) } != null) {
             sawActiveVoice = true
             voiceButtonPressedAt = SystemClock.elapsedRealtime() - 5500L
             chatSeenDuringPause = true
+            // No decir DOS sin confirmar SD: la llamada podría pertenecer a otro chat.
+            if (milestones.hasConfirmed(2)) confirmStage(3, "Modo de voz activo")
             finish("ChatGPT parece tener una llamada de Voz activa. ATENA no la interrumpió.", keepMicReleased = true)
             return
         }
@@ -285,6 +307,7 @@ class WashAccessibilityService : AccessibilityService() {
             // En la cabecera del chat SD, el compositor está disponible; no abrir el menú otra vez.
             // Si la barra lateral está abierta, el elemento SD suele estar en una lista sin editor.
             if (!pinnedSectionOpen && !sidebarAttempted && composerVisible(root)) {
+                sdChosenForThisRun = true
                 step = Step.START_VOICE
                 stepStartedAt = SystemClock.elapsedRealtime()
                 report("Chat SD ya visible: omitiendo búsqueda repetida. Buscando Voz…")
@@ -292,6 +315,7 @@ class WashAccessibilityService : AccessibilityService() {
                 return
             }
             if (clickNodeOrParent(sd)) {
+                sdChosenForThisRun = true
                 step = Step.START_VOICE
                 stepStartedAt = SystemClock.elapsedRealtime()
                 report("Toque solicitado en SD. Comprobando botón de Voz…")
@@ -323,13 +347,14 @@ class WashAccessibilityService : AccessibilityService() {
         val voiceActive = findNode(root) { SdUiRules.isActiveVoiceIndicator(it) } != null
         if (voiceActive) {
             sawActiveVoice = true
+            confirmStage(3, "Modo de voz activo")
             finish("ETAPA VOZ: interfaz de llamada detectada ($voiceAttemptOrigin).", keepMicReleased = true)
             return
         }
         // Si desapareció el cuadro para escribir y pasó el cambio de pantalla, probablemente
         // comenzó la conversación; no interferimos mientras esperamos reconfirmación.
         if (VoiceFlowRules.likelyStarted(elapsed, false, composerVisible(root))) {
-            finish("ETAPA VOZ: desapareció el cuadro de escribir; parece abierta ($voiceAttemptOrigin).", keepMicReleased = true)
+            finish("ETAPA VOZ: desapareció el cuadro de escribir; posiblemente abierta ($voiceAttemptOrigin). Paso 3 sin confirmar.", keepMicReleased = true)
             return
         }
         // El primer toque puede no abrir Voz si ChatGPT cambió las etiquetas accesibles.
@@ -344,6 +369,13 @@ class WashAccessibilityService : AccessibilityService() {
     }
 
     private fun startVoice(root: AccessibilityNodeInfo) {
+        // El toque en la lista SD no basta: confirmar que ya se ve el editor del chat.
+        val pinnedPanelVisible = findNode(root) { SdUiRules.isPinnedHeading(it) } != null
+        if (sdChosenForThisRun && !pinnedPanelVisible &&
+            (composerVisible(root) ||
+                findNode(root) { SdUiRules.isStartVoiceButton(it) } != null)) {
+            confirmStage(2, "Chat SD abierto")
+        }
         if (calibrating) {
             if (composerVisible(root)) showCalibrationOverlay()
             else if (SystemClock.elapsedRealtime() - stepStartedAt > 3500L)
@@ -539,6 +571,8 @@ class WashAccessibilityService : AccessibilityService() {
         handler.removeCallbacks(rearm)
         handler.removeCallbacks(pauseMonitor)
         clearCalibrationOverlay()
+        speaker?.shutdown()
+        speaker = null
         if (current.get() === this) current.clear()
         super.onDestroy()
     }
