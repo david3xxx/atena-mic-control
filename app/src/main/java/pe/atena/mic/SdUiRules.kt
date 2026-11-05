@@ -12,9 +12,6 @@ object SdUiRules {
     // No basta con que el nombre 'SD' aparezca dentro de una pregunta o respuesta.
     fun isSdTitle(value: CharSequence?): Boolean = normalized(value) == "sd"
 
-    fun isPinnedHeading(value: CharSequence?): Boolean =
-        normalized(value) in setOf("fijados", "pinned", "pinned chats", "pinned conversations")
-
     fun isNavigationButton(value: CharSequence?): Boolean {
         val s = normalized(value)
         return listOf("abrir barra lateral", "abrir la barra lateral", "open sidebar", "mostrar barra lateral",

@@ -11,7 +11,8 @@
         <intent><action android:name="android.speech.RecognitionService" /></intent>
     </queries>
     <application
-        android:label="ATENA WASH SD"
+        android:label="JARVIS"
+        android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">

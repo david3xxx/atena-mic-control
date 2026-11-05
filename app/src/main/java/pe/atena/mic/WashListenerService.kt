@@ -14,6 +14,8 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
+import java.util.Locale
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -41,7 +43,7 @@ class WashListenerService : Service() {
         const val MODE_MONITOR = "monitor"
         const val MODE_LOCAL = "local"
         const val MODE_COMPATIBLE = "compatible"
-        private const val CHANNEL_ID = "atena_wash_v15"
+        private const val CHANNEL_ID = "jarvis_v16"
         private const val NOTIFICATION_ID = 313
         private var current = WeakReference<WashListenerService>(null)
         fun openFromMenuIfRunning(): Boolean {
@@ -61,13 +63,13 @@ class WashListenerService : Service() {
                     if (service.active && service.pausedForChat &&
                         service.getSharedPreferences("atena", android.content.Context.MODE_PRIVATE)
                             .getBoolean("auto_rearm", true)) {
-                        service.publish("REACTIVANDO WASH: recuperando micrófono tras ChatGPT.")
+                        service.publish("REACTIVANDO JARVIS: recuperando micrófono tras ChatGPT.")
                         service.stopCurrentCapture()
                         service.pausedForChat = false
                         service.failures = 0
                         service.mode = service.lastMode
-                        service.startRecognition()
-                        service.notifyUser("ATENA escuchando WASH otra vez")
+                        service.scheduleRestart(2000)
+                        service.notifyUser("JARVIS escuchando")
                     }
                 }
             }
@@ -84,6 +86,8 @@ class WashListenerService : Service() {
     private var pausedForChat = false
     private var generation = 0
     private var failures = 0
+    private var lastSpeechAt = 0L
+    private var speakingExit = false
     private var mode = MODE_LOCAL
     private var inputId = -1
     private var lastMode = MODE_LOCAL
@@ -98,7 +102,7 @@ class WashListenerService : Service() {
         if (active && !pausedForChat && !monitoring) {
             publish("El reconocedor no respondió; reiniciando escucha.")
             stopCurrentCapture()
-            handler.postDelayed(restart, 850)
+            handler.postDelayed(restart, 3000)
         }
     }
 
@@ -107,7 +111,7 @@ class WashListenerService : Service() {
         audioManager = getSystemService(AudioManager::class.java)
         current = WeakReference(this)
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "ATENA WASH · Voz", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            NotificationChannel(CHANNEL_ID, "JARVIS · Voz", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 setSound(null, null)
                 enableVibration(false)
             }
@@ -125,12 +129,12 @@ class WashListenerService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle("ATENA WASH")
+            .setContentTitle("JARVIS")
             .setContentText(message.take(100))
             .setContentIntent(openMain)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(Notification.Action.Builder(null, "REANUDAR WASH", pendingService(ACTION_REARM, 2)).build())
+            .addAction(Notification.Action.Builder(null, "REANUDAR JARVIS", pendingService(ACTION_REARM, 2)).build())
             .addAction(Notification.Action.Builder(null, "DETENER", pendingService(ACTION_STOP, 4)).build())
         ChatOpener.intent(this)?.let { launch ->
             val openChat = PendingIntent.getActivity(this, 3, launch,
@@ -145,7 +149,7 @@ class WashListenerService : Service() {
     }
 
     private fun publish(msg: String) {
-        AtenaDiagnostics.append(this, msg)
+        getSharedPreferences("atena", MODE_PRIVATE).edit().putString("last_status", "• $msg").apply()
         sendBroadcast(Intent(ACTION_STATUS).apply {
             setPackage(packageName)
             putExtra(EXTRA_MESSAGE, msg)
@@ -274,7 +278,7 @@ class WashListenerService : Service() {
     }
 
     private fun startRecognition() {
-        if (!active || pausedForChat) return
+        if (!active || pausedForChat || speakingExit) return
         stopCurrentCapture()
         monitoring = false
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
@@ -298,8 +302,8 @@ class WashListenerService : Service() {
             engine.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     if (!isCurrent(session)) return
-                    publish("ESCUCHANDO «wash» · modo $mode (Android elige micrófono)")
-                    notifyUser("Escuchando «wash» · modo $mode")
+                    publish("ESCUCHANDO «Jarvis» · modo $mode (Android elige micrófono)")
+                    notifyUser("Escuchando «Jarvis» · modo $mode")
                 }
                 override fun onBeginningOfSpeech() {
                     if (isCurrent(session)) publish("El reconocedor detectó voz.")
@@ -324,15 +328,27 @@ class WashListenerService : Service() {
                     val aliases = WashMatcher.parseAliases(
                         getSharedPreferences("atena", MODE_PRIVATE).getString("wash_aliases", "").orEmpty()
                     )
-                    if (WashMatcher.containsAny(words, aliases)) {
-                        publish("WASH DETECTADO (incluye pronunciaciones similares): ${words.firstOrNull().orEmpty()}")
-                        pausedForChat = true
-                        stopCurrentCapture()  // Liberar micrófono ANTES de abrir ChatGPT.
-                        handler.postDelayed({ if (active && pausedForChat) openChatGPT() }, 450)
-                    } else {
-                        publish("Se oyó: ${words.firstOrNull() ?: "(sin palabras)"}. Esperando «wash».")
-                        failures = 0
-                        scheduleRestart(450)
+                    val command = JarvisCommands.parse(words)
+                    when (command) {
+                        is JarvisCommands.Command.Volume -> {
+                            adjustVolume(command)
+                            failures = 0
+                            scheduleRestart(1800)
+                        }
+                        JarvisCommands.Command.Exit -> {
+                            speakAndStop()
+                        }
+                        JarvisCommands.Command.Open -> {
+                            publish("JARVIS detectado: abriendo ChatGPT")
+                            pausedForChat = true
+                            stopCurrentCapture()
+                            handler.postDelayed({ if (active && pausedForChat) openChatGPT() }, 650)
+                        }
+                        null -> {
+                            publish("Esperando Jarvis")
+                            failures = 0
+                            scheduleRestart(1800)
+                        }
                     }
                 }
                 override fun onError(error: Int) {
@@ -353,7 +369,7 @@ class WashListenerService : Service() {
                         publish("Reconocimiento temporalmente bloqueado; nuevo intento automático en 20 s.")
                         notifyUser("ATENA esperando motor de voz · reintento automático")
                         scheduleRestart(20000)
-                    } else scheduleRestart(if (failures > 3) 1800 else 600)
+                    } else scheduleRestart(when { failures >= 8 -> 12000L; failures >= 4 -> 6000L; else -> 3000L })
                 }
                 override fun onEvent(eventType: Int, params: Bundle?) { }
             })
@@ -364,12 +380,12 @@ class WashListenerService : Service() {
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             }
             engine.startListening(request)
-            handler.postDelayed(watchdog, 15500)
+            handler.postDelayed(watchdog, 25000)
         } catch (ex: Exception) {
             publish("Error iniciando reconocimiento: ${ex.message}")
             failures++
             if (mode == MODE_LOCAL) mode = MODE_COMPATIBLE
-            if (failures < 12) scheduleRestart(1500)
+            if (failures < 12) scheduleRestart(3000)
             else {
                 failures = 0
                 mode = MODE_COMPATIBLE
@@ -377,6 +393,46 @@ class WashListenerService : Service() {
             }
         }
     }
+
+    private fun adjustVolume(command: JarvisCommands.Command.Volume) {
+        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val currentPercent = if (max > 0) current * 100.0 / max else 0.0
+        val percent = when (command.kind) {
+            "up" -> currentPercent + command.percent
+            "down" -> currentPercent - command.percent
+            "set" -> command.percent.toDouble()
+            "mute" -> 0.0
+            else -> currentPercent
+        }.coerceIn(0.0, 100.0)
+        val level = kotlin.math.round(percent * max / 100.0).toInt().coerceIn(0, max)
+        try {
+            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
+            publish("Volumen multimedia: ${kotlin.math.round(level * 100.0 / max.coerceAtLeast(1)).toInt()} %")
+        } catch (e: Exception) { publish("No se pudo ajustar el volumen: ${e.message}") }
+    }
+
+    private fun speakAndStop() {
+        if (speakingExit) return
+        speakingExit = true
+        active = false
+        stopCurrentCapture()
+        getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("wash_should_listen", false).apply()
+        val tts = TextToSpeech(applicationContext) { result ->
+            if (result == TextToSpeech.SUCCESS) {
+                // Se libera el TTS tras un plazo suficiente para pronunciar la despedida.
+                exitTts?.language = Locale("es", "PE")
+                exitTts?.speak("Okey, señor", TextToSpeech.QUEUE_FLUSH, null, "jarvis_exit")
+            }
+        }
+        exitTts = tts
+        publish("JARVIS apagándose")
+        handler.postDelayed({
+            exitTts?.stop(); exitTts?.shutdown(); exitTts = null
+            stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+        }, 2600)
+    }
+    private var exitTts: TextToSpeech? = null
 
     private fun isCurrent(session: Int) = active && !pausedForChat && !monitoring && session == generation
 
@@ -471,14 +527,14 @@ class WashListenerService : Service() {
         }
         val canNavigate = WashAccessibilityService.requestOpenSdAndVoice()
         if (canNavigate) {
-            publish("WASH: buscando SD y Voz. Después ATENA volverá a escuchar cuando termine.")
+            publish("JARVIS: buscando SD y Voz. Después ATENA volverá a escuchar cuando termine.")
         } else {
             val opened = ChatOpener.open(this)
             publish(if (opened)
                 "ChatGPT abierto, pero falta activar Accesibilidad de ATENA para encontrar SD y pulsar Voz."
                 else "Android impidió abrir ChatGPT. Usa la notificación como alternativa.")
         }
-        notifyUser("WASH → SD → Voz · esperando regreso al chat")
+        notifyUser("JARVIS → SD → Voz · esperando regreso al chat")
     }
 
     private fun stopCurrentCapture() {
@@ -507,6 +563,7 @@ class WashListenerService : Service() {
         active = false
         stopCurrentCapture()
         if (current.get() === this) current.clear()
+        exitTts?.shutdown()
         super.onDestroy()
     }
 }

@@ -3,8 +3,6 @@ package pe.atena.mic
 import android.Manifest
 import android.app.Activity
 import android.content.BroadcastReceiver
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -15,6 +13,10 @@ import android.os.Bundle
 import android.provider.Settings
 import android.widget.ArrayAdapter
 import android.widget.Button
+import android.view.View
+import android.view.WindowManager
+import android.graphics.Color
+import android.graphics.Typeface
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -23,7 +25,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 
-/** ATENA V1.7: WASH → chat fijado SD → control de Voz. Pruebas de micrófono. */
+/** ATENA V1.5: WASH → chat fijado SD → control de Voz. Pruebas de micrófono. */
 class MainActivity : Activity() {
     private lateinit var devicesSpinner: Spinner
     private lateinit var meter: ProgressBar
@@ -52,6 +54,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             val p = (18 * resources.displayMetrics.density).toInt()
@@ -59,119 +62,112 @@ class MainActivity : Activity() {
         }
         fun text(value: String, size: Float = 16f) {
             col.addView(TextView(this).apply {
-                this.text = value; textSize = size
+                this.text = value; textSize = size; setTextColor(Color.rgb(120, 230, 255))
                 setPadding(0, 9, 0, 9)
             })
         }
         fun button(label: String, callback: () -> Unit) {
             col.addView(Button(this).apply { this.text = label; setOnClickListener { callback() } })
         }
-        text("ATENA V1.7 · WASH → SD → VOZ · AVISOS 1·2·3", 24f)
-        text("Avisos hablados: UNO cuando ChatGPT está visible; DOS cuando se confirma SD; TRES cuando se detecta una pantalla de Voz activa. Cada número se dice solo una vez por activación. Si no hay confirmación, no anuncia ese paso.")
-        text("Di «wash» para abrir ChatGPT, buscar tu chat fijado «SD» e intentar pulsar Voz. Necesitas activar el servicio de Accesibilidad de ATENA. La interfaz de ChatGPT puede cambiar.")
-        text("1 · PRUEBA DE MICRÓFONOS", 19f)
-        text("Selecciona el micrófono que quieres comprobar. La prueba de sonido es independiente del reconocimiento de la palabra «wash».")
+        col.setBackgroundColor(Color.rgb(3, 15, 31))
+        text("J.A.R.V.I.S.", 30f)
+        col.addView(JarvisOrbView(this), LinearLayout.LayoutParams(-1, (260 * resources.displayMetrics.density).toInt()))
+        text("● EN ESPERA", 18f)
+        val advanced = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        fun advancedText(value: String, size: Float = 16f) {
+            advanced.addView(TextView(this).apply { text = value; textSize = size; setTextColor(Color.rgb(150, 220, 245)) })
+        }
+        fun advancedButton(label: String, callback: () -> Unit) {
+            advanced.addView(Button(this).apply { text = label; setOnClickListener { callback() } })
+        }
+        button("▶ INICIAR JARVIS") { startServiceMode(WashListenerService.MODE_COMPATIBLE) }
+        button("■ DETENER") { stopService() }
+        button("⚙ OPCIONES Y DIAGNÓSTICO") {
+            advanced.visibility = if (advanced.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        // Options remain collapsed by default; technical tools are kept for troubleshooting.
+
+        advancedText("Di «Jarvis» para abrir ChatGPT, buscar tu chat fijado «SD» e intentar pulsar Voz. Necesitas activar el servicio de Accesibilidad de JARVIS. La interfaz de ChatGPT puede cambiar.")
+        advancedText("1 · PRUEBA DE MICRÓFONOS", 19f)
+        advancedText("Selecciona el micrófono que quieres comprobar. La prueba de sonido es independiente del reconocimiento de la palabra «Jarvis».")
         devicesSpinner = Spinner(this)
-        col.addView(devicesSpinner)
-        button("ACTUALIZAR MICRÓFONOS") { refreshDevices() }
+        advanced.addView(devicesSpinner)
+        advancedButton("ACTUALIZAR MICRÓFONOS") { refreshDevices() }
         meter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100; progress = 0; isIndeterminate = false
         }
-        col.addView(meter, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (20 * resources.displayMetrics.density).toInt()))
+        advanced.addView(meter, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (20 * resources.displayMetrics.density).toInt()))
         meterText = TextView(this).apply { text = "Sonido: 0/100 · Prueba sin iniciar"; textSize = 14f }
-        col.addView(meterText)
-        button("PROBAR MICRÓFONO · VER BARRA") { startServiceMode(WashListenerService.MODE_MONITOR) }
-        button("DETENER PRUEBA") { stopService() }
-        text("2 · ESCUCHA DE «WASH»", 19f)
-        text("El reconocimiento de Android puede usar otro micrófono y puede detenerse en segundo plano. Si falla el modo local, prueba compatible.")
+        advanced.addView(meterText)
+        advancedButton("PROBAR MICRÓFONO · VER BARRA") { startServiceMode(WashListenerService.MODE_MONITOR) }
+        advancedButton("DETENER PRUEBA") { stopService() }
+        advancedText("2 · ESCUCHA DE «JARVIS»", 19f)
+        advancedText("El reconocimiento de Android puede usar otro micrófono y puede detenerse en segundo plano. Si falla el modo local, prueba compatible.")
         recognitionMode = Spinner(this)
         recognitionMode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf(
             "Local (preferido; sin conexión si Android lo permite)",
             "Compatible (motor Android; podría usar Internet)"
         ))
-        col.addView(recognitionMode)
-        button("INICIAR ATENA · ESCUCHAR WASH") {
+        advanced.addView(recognitionMode)
+        advancedButton("INICIAR JARVIS · ESCUCHAR JARVIS") {
             startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
         }
-        button("DETENER ATENA") { stopService() }
-        text("Si Android escribe otra palabra cuando dices Wash, añádela aquí (separada por comas). Usa solo palabras concretas, no expresiones frecuentes.", 14f)
+        advancedButton("DETENER JARVIS") { stopService() }
+        advancedText("Si Android escribe otra palabra cuando dices Wash, añádela aquí (separada por comas). Usa solo palabras concretas, no expresiones frecuentes.", 14f)
         val aliasInput = EditText(this).apply {
             hint = "Ej.: uach, was, cuash"
             setSingleLine(true)
             setText(getSharedPreferences("atena", MODE_PRIVATE).getString("wash_aliases", ""))
         }
-        col.addView(aliasInput)
-        button("GUARDAR PRONUNCIACIONES ALTERNATIVAS") {
+        advanced.addView(aliasInput)
+        advancedButton("GUARDAR PRONUNCIACIONES ALTERNATIVAS") {
             val aliases = WashMatcher.parseAliases(aliasInput.text.toString())
             getSharedPreferences("atena", MODE_PRIVATE).edit()
                 .putString("wash_aliases", aliases.joinToString(",")).apply()
             report("Pronunciaciones alternativas guardadas: ${aliases.joinToString(", ").ifBlank { "ninguna" }}")
         }
-        button("PROBAR AHORA · ABRIR SD Y PULSAR VOZ") {
+        advancedButton("PROBAR AHORA · ABRIR SD Y PULSAR VOZ") {
             val ok = WashListenerService.openFromMenuIfRunning() ||
                 WashAccessibilityService.requestOpenSdAndVoice()
-            report(if (ok) "ATENA está buscando el chat SD. Revisa los mensajes de diagnóstico." else
-                "Debes habilitar Accesibilidad de ATENA para localizar SD y pulsar Voz.")
+            report(if (ok) "JARVIS está buscando el chat SD. Revisa los mensajes de diagnóstico." else
+                "Debes habilitar Accesibilidad de JARVIS para localizar SD y pulsar Voz.")
         }
-        button("CALIBRAR BOTÓN VOZ (SI LA BÚSQUEDA AUTOMÁTICA FALLA)") {
-            val ok = WashAccessibilityService.requestVoiceCalibration()
-            report(if (ok) "ATENA abrirá SD; cuando aparezca la instrucción, toca el botón de Voz una vez."
-                else "Activa el servicio de Accesibilidad de ATENA antes de calibrar.")
-        }
-        text("La calibración guarda una sola posición elegida por ti y no pulsa el botón durante el registro. Se usa únicamente si la etiqueta accesible de Voz no aparece. Recalibra si cambia el diseño o la orientación.", 14f)
-        text("3 · ACCESIBILIDAD: NECESARIA PARA ABRIR SD Y PULSAR VOZ", 19f)
-        text("Para buscar SD, ATENA necesita leer los títulos y descripciones accesibles de la interfaz de ChatGPT. Solo intentará pulsar el chat «SD» y el botón de Voz identificado por su etiqueta; no guarda conversaciones ni hace capturas. Es un permiso sensible: habilítalo solo si confías en ATENA.")
-        button("ACTIVAR ACCESIBILIDAD PARA SD Y VOZ") {
+        advancedText("3 · ACCESIBILIDAD: NECESARIA PARA ABRIR SD Y PULSAR VOZ", 19f)
+        advancedText("Para buscar SD, JARVIS necesita leer los títulos y descripciones accesibles de la interfaz de ChatGPT. Solo intentará pulsar el chat «SD» y el botón de Voz identificado por su etiqueta; no guarda conversaciones ni hace capturas. Es un permiso sensible: habilítalo solo si confías en JARVIS.")
+        advancedButton("ACTIVAR ACCESIBILIDAD PARA SD Y VOZ") {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
         val autoRearm = CheckBox(this).apply {
-            text = "Reactivar WASH cuando salga de ChatGPT o parezca terminar Voz (experimental)"
+            text = "Reactivar JARVIS cuando salga de ChatGPT o parezca terminar Voz (experimental)"
             isChecked = getSharedPreferences("atena", MODE_PRIVATE).getBoolean("auto_rearm", true)
             setOnCheckedChangeListener { _, checked ->
                 getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("auto_rearm", checked).apply()
                 report(if (checked) "Reactivación experimental activada." else "Reactivación experimental desactivada.")
             }
         }
-        col.addView(autoRearm)
+        advanced.addView(autoRearm)
         // V1.4 mostraba activado el valor por defecto sin guardarlo. Alineamos UI y servicio.
         if (!getSharedPreferences("atena", MODE_PRIVATE).contains("auto_rearm")) {
             getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("auto_rearm", true).apply()
         }
-        text("Esta opción depende de que ChatGPT exponga cambios detectables en Accesibilidad. Puede interferir con Voz en segundo plano: desmárcala si ocurre.")
-        text("V1.7: al salir de ChatGPT o cuando reaparece el cuadro para escribir, ATENA reintenta escuchar «wash». Durante una llamada de Voz mantiene liberado el micrófono; reactivarlo al finalizar es experimental.")
-        text("Tras detectar «wash», ATENA libera el micrófono. Si ChatGPT cambia el nombre del botón de Voz o no muestra SD, ATENA lo indicará sin pulsar puntos desconocidos. La reactivación no es infalible.")
-        button("REANUDAR ESCUCHA WASH") {
+        advancedText("Esta opción depende de que ChatGPT exponga cambios detectables en Accesibilidad. Puede interferir con Voz en segundo plano: desmárcala si ocurre.")
+        advancedText("V1.5: al salir de ChatGPT o cuando reaparece el cuadro para escribir, JARVIS reintenta escuchar «Jarvis». Durante una llamada de Voz mantiene liberado el micrófono; reactivarlo al finalizar es experimental.")
+        advancedText("Tras detectar «Jarvis», JARVIS libera el micrófono. Si ChatGPT cambia el nombre del botón de Voz o no muestra SD, JARVIS lo indicará sin pulsar puntos desconocidos. La reactivación no es infalible.")
+        advancedButton("REANUDAR ESCUCHA JARVIS") {
             startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
         }
-        text("DIAGNÓSTICO", 19f)
+        advancedText("DIAGNÓSTICO", 19f)
         status = TextView(this).apply {
             textSize = 14f
             text = getSharedPreferences("atena", MODE_PRIVATE)
-                .getString("diagnostic_history", "• ATENA lista. Prueba primero el sonido.")
+                .getString("last_status", "• JARVIS lista. Prueba primero el sonido.")
             setPadding(0, 8, 0, 18)
         }
-        col.addView(status)
-        button("ACTUALIZAR DIAGNÓSTICO") { loadDiagnostics() }
-        button("COPIAR DIAGNÓSTICO") {
-            val history = getSharedPreferences("atena", MODE_PRIVATE)
-                .getString("diagnostic_history", "(sin eventos)").orEmpty()
-            getSystemService(ClipboardManager::class.java)
-                .setPrimaryClip(ClipData.newPlainText("ATENA diagnóstico", history))
-            report("Diagnóstico copiado; puedes pegarlo en nuestro chat.")
-        }
+        advanced.addView(status)
+        col.addView(advanced)
         setContentView(ScrollView(this).apply { addView(col) })
         permissions()
         refreshDevices()
-    }
-
-    private fun loadDiagnostics() {
-        status.text = getSharedPreferences("atena", MODE_PRIVATE)
-            .getString("diagnostic_history", "(sin eventos)")
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (::status.isInitialized) loadDiagnostics()
     }
 
     private fun permissions() {
