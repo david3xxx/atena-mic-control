@@ -488,11 +488,14 @@ class WashListenerService : Service() {
     private var confirmationTts: TextToSpeech? = null
     private var restoring = false
 
-    override fun onDestroy() {
-        confirmationTts?.shutdown()
-        exitTts?.shutdown()
-        super.onDestroy()
-    }
+  override fun onDestroy() {
+    active = false
+    stopCurrentCapture()
+    if (current.get() === this) current.clear()
+    confirmationTts?.shutdown()
+    exitTts?.shutdown()
+    super.onDestroy()
+}
 
     private fun isCurrent(session: Int) = active && !pausedForChat && !monitoring && session == generation
 
