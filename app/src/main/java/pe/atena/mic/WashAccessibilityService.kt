@@ -15,16 +15,10 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.lang.ref.WeakReference
 import java.util.Locale
 
-/**
- * Navega únicamente dentro de ChatGPT.
- * Busca el chat SD y activa el botón de Voz.
- * Anuncia cada paso mediante TextToSpeech.
- */
 class WashAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val CHATGPT = "com.openai.chatgpt"
-
         private var current =
             WeakReference<WashAccessibilityService>(null)
 
@@ -35,13 +29,9 @@ class WashAccessibilityService : AccessibilityService() {
             } ?: false
     }
 
-    private enum class Step {
-        FIND_SD,
-        START_VOICE
-    }
+    private enum class Step { FIND_SD, START_VOICE }
 
     private val handler = Handler(Looper.getMainLooper())
-
     private var navigating = false
     private var step = Step.FIND_SD
     private var started = 0L
@@ -56,95 +46,74 @@ class WashAccessibilityService : AccessibilityService() {
     private var screenAbsentChecks = 0
     private var readyToSpeakChecks = 0
 
-    // Sistema de avisos hablados
-    private var stepsTts: TextToSpeech? = null
-    private var stepsTtsReady = false
-    private var announcedStep = 0
-    private val pendingAnnouncements = ArrayDeque<Int>()
-    private var waitingForVoiceConfirmation = false
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+    private var lastAnnounced = 0
+    private val pending = ArrayDeque<Int>()
+    private var awaitingVoice = false
 
-    private fun initStepsVoice() {
-        if (stepsTts != null) return
+    private fun initializeTts() {
+        if (tts != null) return
 
-        stepsTts = TextToSpeech(applicationContext) { result ->
+        tts = TextToSpeech(applicationContext) { result ->
             handler.post {
                 if (result == TextToSpeech.SUCCESS) {
-                    val engine = stepsTts
+                    val engine = tts
                     if (engine != null) {
-                        val languageResult =
+                        val language =
                             engine.setLanguage(Locale("es", "PE"))
 
-                        stepsTtsReady =
-                            languageResult !=
-                                TextToSpeech.LANG_MISSING_DATA &&
-                            languageResult !=
-                                TextToSpeech.LANG_NOT_SUPPORTED
+                        ttsReady =
+                            language != TextToSpeech.LANG_MISSING_DATA &&
+                            language != TextToSpeech.LANG_NOT_SUPPORTED
 
-                        if (stepsTtsReady) {
+                        if (ttsReady) {
                             engine.setSpeechRate(0.9f)
-                            flushAnnouncements()
-                        } else {
-                            report(
-                                "El motor de voz no dispone " +
-                                "de español."
-                            )
+                            flushSpeech()
                         }
                     }
-                } else {
-                    report(
-                        "No se pudo inicializar " +
-                        "la voz de los pasos."
-                    )
                 }
             }
         }
     }
 
-    private fun announce(number: Int) {
-        if (number <= announcedStep) return
+    private fun say(number: Int) {
+        if (number <= lastAnnounced) return
 
-        // Garantiza el orden y evita repeticiones.
-        for (next in (announcedStep + 1)..number) {
-            pendingAnnouncements.addLast(next)
+        for (n in (lastAnnounced + 1)..number) {
+            pending.addLast(n)
         }
 
-        announcedStep = number
-        flushAnnouncements()
+        lastAnnounced = number
+        flushSpeech()
     }
 
-    private fun flushAnnouncements() {
-        if (!stepsTtsReady) return
+    private fun flushSpeech() {
+        if (!ttsReady) return
 
-        val engine = stepsTts ?: return
+        val engine = tts ?: return
 
-        while (pendingAnnouncements.isNotEmpty()) {
-            val number = pendingAnnouncements.removeFirst()
+        while (pending.isNotEmpty()) {
+            val number = pending.removeFirst()
 
             val word = when (number) {
                 1 -> "Uno"
                 2 -> "Dos"
-                3 -> "Tres"
-                else -> continue
+                else -> "Tres"
             }
 
             engine.speak(
                 word,
                 TextToSpeech.QUEUE_ADD,
                 null,
-                "jarvis_step_${number}_${started}"
+                "jarvis_${started}_$number"
             )
         }
     }
 
-    /**
-     * Comprueba la sesión mientras JARVIS
-     * ha cedido el micrófono a ChatGPT.
-     */
     private val pauseMonitor = object : Runnable {
         override fun run() {
-            if (!WashListenerService.isWaitingForChat()) {
-                return
-            }
+            if (!WashListenerService.isWaitingForChat()) return
 
             if (
                 getSharedPreferences("atena", MODE_PRIVATE)
@@ -159,9 +128,7 @@ class WashAccessibilityService : AccessibilityService() {
         }
     }
 
-    private val scan = Runnable {
-        scanWindow()
-    }
+    private val scan = Runnable { scanWindow() }
 
     private val rearm = Runnable {
         val pref =
@@ -174,14 +141,11 @@ class WashAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-
         current = WeakReference(this)
-
-        initStepsVoice()
+        initializeTts()
 
         report(
-            "Accesibilidad lista: JARVIS puede " +
-            "buscar SD y activar Voz."
+            "Accesibilidad lista: JARVIS puede buscar SD y Voz."
         )
 
         if (WashListenerService.isWaitingForChat()) {
@@ -218,38 +182,27 @@ class WashAccessibilityService : AccessibilityService() {
         readyToSpeakChecks = 0
 
         navigating = true
+        lastAnnounced = 0
+        pending.clear()
+        awaitingVoice = false
+
         step = Step.FIND_SD
         started = SystemClock.elapsedRealtime()
-
         sidebarAttempted = false
         sidebarOpenedAt = 0L
         sawActiveVoice = false
 
-        // Reiniciar avisos para cada activación.
-        announcedStep = 0
-        pendingAnnouncements.clear()
-        waitingForVoiceConfirmation = false
-
         val root = chatRoot()
 
         if (root?.packageName?.toString() != CHATGPT) {
-            report(
-                "JARVIS: abriendo ChatGPT " +
-                "para buscar SD."
-            )
+            report("JARVIS: abriendo ChatGPT para buscar SD.")
 
             if (!ChatOpener.open(this)) {
-                finish(
-                    "No se pudo abrir ChatGPT. " +
-                    "Comprueba que esté instalado."
-                )
+                finish("No se pudo abrir ChatGPT.")
                 return
             }
         } else {
-            report(
-                "JARVIS: ChatGPT ya está abierto; " +
-                "buscando SD."
-            )
+            report("ChatGPT abierto. Buscando SD.")
         }
 
         schedule(550)
@@ -266,7 +219,6 @@ class WashAccessibilityService : AccessibilityService() {
     ) {
         navigating = false
         handler.removeCallbacks(scan)
-
         report(message)
 
         if (
@@ -310,16 +262,14 @@ class WashAccessibilityService : AccessibilityService() {
                 )
             ) {
                 report(
-                    "ChatGPT salió de pantalla; " +
+                    "ChatGPT salió de pantalla. " +
                     "JARVIS vuelve a escuchar."
                 )
 
                 screenAbsentChecks = 0
-                waitingForVoiceConfirmation = false
-
+                awaitingVoice = false
                 WashListenerService.rearmAfterChatLeft()
             }
-
             return
         }
 
@@ -331,13 +281,12 @@ class WashAccessibilityService : AccessibilityService() {
         } != null
 
         if (inVoice) {
-            sawActiveVoice = true
-
-            // TRES: interfaz de Voz detectada.
-            if (waitingForVoiceConfirmation) {
-                announce(3)
-                waitingForVoiceConfirmation = false
+            if (awaitingVoice) {
+                say(3)
+                awaitingVoice = false
             }
+
+            sawActiveVoice = true
 
             if (voiceButtonPressedAt == 0L) {
                 voiceButtonPressedAt =
@@ -375,11 +324,10 @@ class WashAccessibilityService : AccessibilityService() {
                 )
             ) {
                 readyToSpeakChecks = 0
-                waitingForVoiceConfirmation = false
 
                 report(
-                    "Volvió el cuadro de chat; " +
-                    "reanudando JARVIS."
+                    "Volvió el cuadro de chat. " +
+                    "Reanudando JARVIS."
                 )
 
                 WashListenerService.rearmAfterChatLeft()
@@ -395,19 +343,14 @@ class WashAccessibilityService : AccessibilityService() {
         val type = event?.eventType ?: return
 
         if (
-            type !=
-                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            type !=
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
-            type !=
-                AccessibilityEvent.TYPE_VIEW_SCROLLED
+            type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            type != AccessibilityEvent.TYPE_VIEW_SCROLLED
         ) {
             return
         }
 
-        val pkg = event.packageName
-            ?.toString()
-            .orEmpty()
+        val pkg = event.packageName?.toString().orEmpty()
 
         if (pkg == CHATGPT) {
             chatWasOnScreen = true
@@ -426,10 +369,8 @@ class WashAccessibilityService : AccessibilityService() {
                     schedule(250)
                 }
             } else if (
-                type ==
-                    AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-                type ==
-                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                type == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
             ) {
                 observeVoiceEnd()
             }
@@ -437,18 +378,9 @@ class WashAccessibilityService : AccessibilityService() {
             pkg != packageName &&
             pkg != "com.android.systemui" &&
             pkg.isNotBlank() &&
-            !pkg.contains(
-                "inputmethod",
-                ignoreCase = true
-            ) &&
-            !pkg.contains(
-                "honeyboard",
-                ignoreCase = true
-            ) &&
-            !pkg.contains(
-                "keyboard",
-                ignoreCase = true
-            )
+            !pkg.contains("inputmethod", ignoreCase = true) &&
+            !pkg.contains("honeyboard", ignoreCase = true) &&
+            !pkg.contains("keyboard", ignoreCase = true)
         ) {
             if (
                 chatWasOnScreen &&
@@ -456,7 +388,6 @@ class WashAccessibilityService : AccessibilityService() {
                 chatRoot() == null
             ) {
                 chatWasOnScreen = false
-
                 handler.removeCallbacks(rearm)
                 handler.postDelayed(rearm, 5000)
             }
@@ -466,12 +397,9 @@ class WashAccessibilityService : AccessibilityService() {
     private fun observeVoiceEnd() {
         val now = SystemClock.elapsedRealtime()
 
-        if (now - lastVoiceObservationAt < 1000) {
-            return
-        }
+        if (now - lastVoiceObservationAt < 1000) return
 
         lastVoiceObservationAt = now
-
         val root = chatRoot() ?: return
 
         val active = findNode(root) {
@@ -479,12 +407,12 @@ class WashAccessibilityService : AccessibilityService() {
         } != null
 
         if (active) {
-            sawActiveVoice = true
-
-            if (waitingForVoiceConfirmation) {
-                announce(3)
-                waitingForVoiceConfirmation = false
+            if (awaitingVoice) {
+                say(3)
+                awaitingVoice = false
             }
+
+            sawActiveVoice = true
 
             if (voiceButtonPressedAt == 0L) {
                 voiceButtonPressedAt =
@@ -508,8 +436,7 @@ class WashAccessibilityService : AccessibilityService() {
 
         if (lastScanAt - started > 16500) {
             finish(
-                "Tiempo agotado: no pude confirmar " +
-                "SD y el botón de Voz."
+                "Tiempo agotado: no pude confirmar SD y Voz."
             )
             return
         }
@@ -521,33 +448,20 @@ class WashAccessibilityService : AccessibilityService() {
             return
         }
 
-        // UNO: ChatGPT está realmente en pantalla.
-        announce(1)
+        say(1)
 
-        val voiceActive = findNode(root) {
-            SdUiRules.isActiveVoiceIndicator(it)
-        } != null
-
-        if (voiceActive) {
+        if (
+            findNode(root) {
+                SdUiRules.isActiveVoiceIndicator(it)
+            } != null
+        ) {
             sawActiveVoice = true
-
             voiceButtonPressedAt =
                 SystemClock.elapsedRealtime() - 5500L
-
             chatSeenDuringPause = true
 
-            // Solo anunciar TRES cuando venimos
-            // de la selección del chat SD.
-            if (
-                step == Step.START_VOICE &&
-                announcedStep >= 2
-            ) {
-                announce(3)
-            }
-
             finish(
-                "ChatGPT tiene una sesión " +
-                "de Voz activa.",
+                "ChatGPT ya tiene una sesión de Voz activa.",
                 keepMicReleased = true
             )
             return
@@ -559,25 +473,16 @@ class WashAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun findSd(
-        root: AccessibilityNodeInfo
-    ) {
+    private fun findSd(root: AccessibilityNodeInfo) {
         val sd = findNode(root) {
             SdUiRules.isSdTitle(it)
         }
 
-        if (
-            sd != null &&
-            clickNodeOrParent(sd)
-        ) {
+        if (sd != null && clickNodeOrParent(sd)) {
             step = Step.START_VOICE
 
-            // DOS: se solicitó abrir el chat SD.
-            announce(2)
-
             report(
-                "Chat SD seleccionado. " +
-                "Buscando botón de Voz."
+                "Chat SD seleccionado. Buscando botón de Voz."
             )
 
             schedule(900)
@@ -589,18 +494,12 @@ class WashAccessibilityService : AccessibilityService() {
                 SdUiRules.isNavigationButton(it)
             }
 
-            if (
-                menu != null &&
-                clickNodeOrParent(menu)
-            ) {
+            if (menu != null && clickNodeOrParent(menu)) {
                 sidebarAttempted = true
-
-                sidebarOpenedAt =
-                    SystemClock.elapsedRealtime()
+                sidebarOpenedAt = SystemClock.elapsedRealtime()
 
                 report(
-                    "Abriendo historial de ChatGPT " +
-                    "para buscar SD."
+                    "Abriendo historial para buscar SD."
                 )
 
                 schedule(850)
@@ -608,22 +507,16 @@ class WashAccessibilityService : AccessibilityService() {
             }
 
             sidebarAttempted = true
+            sidebarOpenedAt = SystemClock.elapsedRealtime()
 
-            sidebarOpenedAt =
-                SystemClock.elapsedRealtime()
-
-            report(
-                "Buscando SD en pantalla."
-            )
+            report("Buscando SD en pantalla.")
         }
 
         if (
             SystemClock.elapsedRealtime() -
                 sidebarOpenedAt > 6000
         ) {
-            finish(
-                "No pude localizar el chat fijado SD."
-            )
+            finish("No pude localizar el chat SD.")
         } else {
             schedule(650)
         }
@@ -640,21 +533,16 @@ class WashAccessibilityService : AccessibilityService() {
             voiceButton != null &&
             clickNodeOrParent(voiceButton)
         ) {
+            say(2)
+            awaitingVoice = true
+
             voiceButtonPressedAt =
                 SystemClock.elapsedRealtime()
 
             chatSeenDuringPause = true
 
-            // No anunciar TRES todavía.
-            // Esperamos a detectar la interfaz de Voz.
-            waitingForVoiceConfirmation = true
-
-            handler.removeCallbacks(pauseMonitor)
-            handler.postDelayed(pauseMonitor, 650)
-
             finish(
-                "JARVIS pulsó Voz en SD. " +
-                "Esperando confirmación.",
+                "JARVIS pulsó Voz en SD.",
                 keepMicReleased = true
             )
             return
@@ -665,8 +553,7 @@ class WashAccessibilityService : AccessibilityService() {
                 started > 13500
         ) {
             finish(
-                "Entré al chat SD, pero no encontré " +
-                "un botón de Voz identificable."
+                "Entré a SD, pero no encontré el botón de Voz."
             )
         } else {
             schedule(600)
@@ -676,17 +563,11 @@ class WashAccessibilityService : AccessibilityService() {
     private fun findEditableNode(
         root: AccessibilityNodeInfo
     ): Boolean {
-        val queue =
-            ArrayDeque<AccessibilityNodeInfo>()
-
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.add(root)
-
         var count = 0
 
-        while (
-            queue.isNotEmpty() &&
-            count++ < 450
-        ) {
+        while (queue.isNotEmpty() && count++ < 450) {
             val node = queue.removeFirst()
 
             if (
@@ -709,11 +590,8 @@ class WashAccessibilityService : AccessibilityService() {
         root: AccessibilityNodeInfo,
         rule: (CharSequence?) -> Boolean
     ): AccessibilityNodeInfo? {
-        val pending =
-            ArrayDeque<AccessibilityNodeInfo>()
-
+        val pending = ArrayDeque<AccessibilityNodeInfo>()
         pending.add(root)
-
         var inspected = 0
 
         while (
@@ -746,16 +624,11 @@ class WashAccessibilityService : AccessibilityService() {
         var candidate: AccessibilityNodeInfo? = node
 
         repeat(5) {
-            if (candidate == null) {
-                return@repeat
-            }
+            if (candidate == null) return@repeat
 
             val item = candidate!!
 
-            if (
-                item.isClickable &&
-                item.isEnabled
-            ) {
+            if (item.isClickable && item.isEnabled) {
                 if (
                     item.performAction(
                         AccessibilityNodeInfo.ACTION_CLICK
@@ -771,10 +644,7 @@ class WashAccessibilityService : AccessibilityService() {
         val rect = Rect()
         node.getBoundsInScreen(rect)
 
-        if (
-            !rect.isEmpty &&
-            node.isVisibleToUser
-        ) {
+        if (!rect.isEmpty && node.isVisibleToUser) {
             val path = Path().apply {
                 moveTo(
                     rect.exactCenterX(),
@@ -803,20 +673,16 @@ class WashAccessibilityService : AccessibilityService() {
         return false
     }
 
-    override fun onInterrupt() {
-    }
+    override fun onInterrupt() {}
 
     override fun onDestroy() {
         handler.removeCallbacks(scan)
         handler.removeCallbacks(rearm)
         handler.removeCallbacks(pauseMonitor)
 
-        pendingAnnouncements.clear()
-
-        stepsTts?.stop()
-        stepsTts?.shutdown()
-        stepsTts = null
-        stepsTtsReady = false
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
 
         if (current.get() === this) {
             current.clear()
