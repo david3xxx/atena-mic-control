@@ -11,6 +11,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
 import android.provider.Settings
+import android.app.NotificationManager
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.view.View
@@ -82,7 +83,13 @@ class MainActivity : Activity() {
         }
         button("▶ INICIAR JARVIS") { startServiceMode(WashListenerService.MODE_COMPATIBLE) }
         button("■ DETENER") { stopService() }
-        button("⚙ OPCIONES Y DIAGNÓSTICO") {
+        button("♿ ACTIVAR ACCESIBILIDAD") {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+        button("☾ PERMISO NO MOLESTAR") {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+        }
+        button("⚙ MOSTRAR / OCULTAR OPCIONES") {
             advanced.visibility = if (advanced.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
         // Options remain collapsed by default; technical tools are kept for troubleshooting.
@@ -113,7 +120,7 @@ class MainActivity : Activity() {
             startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
         }
         advancedButton("DETENER JARVIS") { stopService() }
-        advancedText("Si Android escribe otra palabra cuando dices Wash, añádela aquí (separada por comas). Usa solo palabras concretas, no expresiones frecuentes.", 14f)
+        advancedText("Comando principal: Jarvis. El reconocimiento de Android puede elegir otro micrófono.", 14f)
         val aliasInput = EditText(this).apply {
             hint = "Ej.: uach, was, cuash"
             setSingleLine(true)
@@ -156,6 +163,8 @@ class MainActivity : Activity() {
         advancedButton("REANUDAR ESCUCHA JARVIS") {
             startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
         }
+        val diagButton = Button(this).apply { text = "◉ MOSTRAR / OCULTAR DIAGNÓSTICO" }
+        advanced.addView(diagButton)
         advancedText("DIAGNÓSTICO", 19f)
         status = TextView(this).apply {
             textSize = 14f
@@ -163,6 +172,8 @@ class MainActivity : Activity() {
                 .getString("last_status", "• JARVIS lista. Prueba primero el sonido.")
             setPadding(0, 8, 0, 18)
         }
+        status.visibility = View.GONE
+        diagButton.setOnClickListener { status.visibility = if (status.visibility == View.GONE) View.VISIBLE else View.GONE }
         advanced.addView(status)
         col.addView(advanced)
         setContentView(ScrollView(this).apply { addView(col) })
@@ -197,7 +208,7 @@ class MainActivity : Activity() {
             val headsetIndex = inputs.indexOfFirst { it.type in listOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
                 AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADSET) }
             if (headsetIndex >= 0) devicesSpinner.setSelection(headsetIndex)
-            report("Detectados ${inputs.size} dispositivos de entrada. Selecciona el que quieras probar.")
+            report("Micrófonos conectados (${inputs.size}): " + inputs.joinToString(" | ") { label(it) }.ifBlank { "ninguno" })
         } catch (ex: Exception) {
             report("Error al consultar micrófonos: ${ex.message}")
         }

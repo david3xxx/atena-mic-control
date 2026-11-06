@@ -6,6 +6,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.NotificationManager as AndroidNotificationManager
+import android.media.AudioAttributes
+import android.speech.tts.UtteranceProgressListener
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioDeviceInfo
@@ -198,6 +201,7 @@ class WashListenerService : Service() {
                     pausedForChat = false
                     monitoring = false
                     active = true
+                    enableFocusMode()
                     failures = 0
                     inputId = intent.getIntExtra(EXTRA_INPUT_ID, -1)
                     mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_LOCAL
@@ -229,6 +233,7 @@ class WashListenerService : Service() {
                     active = false
                     pausedForChat = false
                     stopCurrentCapture()
+                    restoreFocusMode()
                     publish("ATENA detenida por el usuario.")
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
@@ -237,6 +242,7 @@ class WashListenerService : Service() {
         } catch (ex: Exception) {
             active = false
             stopCurrentCapture()
+            restoreFocusMode()
             publish("No se pudo iniciar ATENA: ${ex.message}")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -331,9 +337,10 @@ class WashListenerService : Service() {
                     val command = JarvisCommands.parse(words)
                     when (command) {
                         is JarvisCommands.Command.Volume -> {
-                            adjustVolume(command)
+                            val changed = adjustVolume(command)
                             failures = 0
-                            scheduleRestart(1800)
+                            if (changed) speakConfirmation()
+                            scheduleRestart(if (changed) 2700 else 1800)
                         }
                         JarvisCommands.Command.Exit -> {
                             speakAndStop()
@@ -394,27 +401,72 @@ class WashListenerService : Service() {
         }
     }
 
-    private fun adjustVolume(command: JarvisCommands.Command.Volume) {
-        val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        val current = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        val currentPercent = if (max > 0) current * 100.0 / max else 0.0
-        val percent = when (command.kind) {
-            "up" -> currentPercent + command.percent
-            "down" -> currentPercent - command.percent
-            "set" -> command.percent.toDouble()
-            "mute" -> 0.0
-            else -> currentPercent
-        }.coerceIn(0.0, 100.0)
-        val level = kotlin.math.round(percent * max / 100.0).toInt().coerceIn(0, max)
+    /** Samsung Bluetooth call output: this stream is verified on-device, not assumed universal. */
+    private fun adjustVolume(command: JarvisCommands.Command.Volume): Boolean {
+        val stream = AudioManager.STREAM_VOICE_CALL
+        return try {
+            val max = audioManager.getStreamMaxVolume(stream).coerceAtLeast(1)
+            val current = audioManager.getStreamVolume(stream)
+            val percent = when (command.kind) {
+                "up" -> current * 100.0 / max + command.percent
+                "down" -> current * 100.0 / max - command.percent
+                "set" -> command.percent.toDouble()
+                "mute" -> 0.0
+                else -> current * 100.0 / max
+            }.coerceIn(0.0, 100.0)
+            val level = kotlin.math.round(percent * max / 100.0).toInt().coerceIn(0, max)
+            audioManager.setStreamVolume(stream, level, 0)
+            publish("Voz llamada/Bluetooth: ${kotlin.math.round(level * 100.0 / max).toInt()} %")
+            true
+        } catch (e: Exception) {
+            publish("No se pudo ajustar voz Bluetooth: ${e.message}"); false
+        }
+    }
+
+    private fun speakConfirmation() {
+        confirmationTts?.stop(); confirmationTts?.shutdown(); confirmationTts = null
+        confirmationTts = TextToSpeech(applicationContext) { result ->
+            if (result == TextToSpeech.SUCCESS && active) {
+                confirmationTts?.language = Locale("es", "PE")
+                confirmationTts?.setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                confirmationTts?.speak("OK", TextToSpeech.QUEUE_FLUSH, null, "volume_ok")
+            } else if (result != TextToSpeech.SUCCESS) publish("No hay motor de voz TTS disponible")
+        }
+    }
+
+    /** Stores previous interruption filter. DND silences, does not reject calls. */
+    private fun enableFocusMode() {
+        val nm = getSystemService(AndroidNotificationManager::class.java)
+        val prefs = getSharedPreferences("atena", MODE_PRIVATE)
+        if (!nm.isNotificationPolicyAccessGranted) {
+            publish("Autoriza acceso a No molestar desde Ajustes"); return
+        }
         try {
-            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, level, 0)
-            publish("Volumen multimedia: ${kotlin.math.round(level * 100.0 / max.coerceAtLeast(1)).toInt()} %")
-        } catch (e: Exception) { publish("No se pudo ajustar el volumen: ${e.message}") }
+            if (!prefs.getBoolean("dnd_owned", false)) {
+                prefs.edit().putInt("dnd_previous", nm.currentInterruptionFilter)
+                    .putBoolean("dnd_owned", true).apply()
+            }
+            nm.setInterruptionFilter(AndroidNotificationManager.INTERRUPTION_FILTER_NONE)
+        } catch (e: Exception) { publish("No molestar no disponible: ${e.message}") }
+    }
+
+    private fun restoreFocusMode() {
+        val prefs = getSharedPreferences("atena", MODE_PRIVATE)
+        if (!prefs.getBoolean("dnd_owned", false)) return
+        val nm = getSystemService(AndroidNotificationManager::class.java)
+        if (!nm.isNotificationPolicyAccessGranted) return
+        try {
+            nm.setInterruptionFilter(prefs.getInt("dnd_previous", AndroidNotificationManager.INTERRUPTION_FILTER_ALL))
+            prefs.edit().putBoolean("dnd_owned", false).apply()
+        } catch (e: Exception) { publish("Restaura No molestar manualmente: ${e.message}") }
     }
 
     private fun speakAndStop() {
         if (speakingExit) return
         speakingExit = true
+        restoreFocusMode()
         active = false
         stopCurrentCapture()
         getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("wash_should_listen", false).apply()
@@ -433,6 +485,14 @@ class WashListenerService : Service() {
         }, 2600)
     }
     private var exitTts: TextToSpeech? = null
+    private var confirmationTts: TextToSpeech? = null
+    private var restoring = false
+
+    override fun onDestroy() {
+        confirmationTts?.shutdown()
+        exitTts?.shutdown()
+        super.onDestroy()
+    }
 
     private fun isCurrent(session: Int) = active && !pausedForChat && !monitoring && session == generation
 

@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <queries>
         <package android:name="com.openai.chatgpt" />
         <intent><action android:name="android.speech.RecognitionService" /></intent>
@@ -26,7 +27,7 @@
             android:foregroundServiceType="microphone" />
         <service android:name=".WashAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-            android:label="ATENA · Navegación a SD y Voz"
+            android:label="JARVIS · SD y Voz"
             android:exported="true">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
             <meta-data android:name="android.accessibilityservice"
