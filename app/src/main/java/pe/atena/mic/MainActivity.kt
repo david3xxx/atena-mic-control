@@ -1,3 +1,4 @@
+
 package pe.atena.mic
 
 import android.Manifest
@@ -7,17 +8,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Bundle
 import android.provider.Settings
-import android.app.NotificationManager
-import android.widget.ArrayAdapter
-import android.widget.Button
+import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.graphics.Color
-import android.graphics.Typeface
+import android.widget.ArrayAdapter
+import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -26,225 +28,781 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 
-/** ATENA V1.5: WASH → chat fijado SD → control de Voz. Pruebas de micrófono. */
 class MainActivity : Activity() {
+
+    private val background = Color.rgb(3, 10, 22)
+    private val panelColor = Color.rgb(10, 27, 45)
+    private val cyan = Color.rgb(0, 225, 255)
+    private val white = Color.WHITE
+    private val muted = Color.rgb(175, 205, 220)
+
     private lateinit var devicesSpinner: Spinner
     private lateinit var meter: ProgressBar
     private lateinit var meterText: TextView
     private lateinit var status: TextView
     private lateinit var recognitionMode: Spinner
+    private lateinit var stateLabel: TextView
+
     private var inputs: List<AudioDeviceInfo> = emptyList()
+    private var listening = false
 
     private val statusReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
+        override fun onReceive(
+            context: Context?,
+            intent: Intent?
+        ) {
             when (intent?.action) {
                 WashListenerService.ACTION_METER -> {
-                    val level = intent.getIntExtra(WashListenerService.EXTRA_LEVEL, 0).coerceIn(0, 100)
+                    val level = intent.getIntExtra(
+                        WashListenerService.EXTRA_LEVEL, 0
+                    ).coerceIn(0, 100)
+
                     meter.progress = level
-                    val label = intent.getStringExtra(WashListenerService.EXTRA_SOURCE) ?: "Sin fuente confirmada"
-                    meterText.text = "Sonido: $level/100 · $label"
+
+                    val source = intent.getStringExtra(
+                        WashListenerService.EXTRA_SOURCE
+                    ) ?: "Sin fuente confirmada"
+
+                    meterText.text =
+                        "NIVEL: $level/100\n$source"
                 }
-                WashListenerService.ACTION_STATUS -> intent.getStringExtra(WashListenerService.EXTRA_MESSAGE)?.let(::report)
+
+                WashListenerService.ACTION_STATUS -> {
+                    intent.getStringExtra(
+                        WashListenerService.EXTRA_MESSAGE
+                    )?.let { report(it) }
+                }
             }
         }
     }
 
-    private fun report(msg: String) {
-        status.text = ("• $msg\n" + status.text.toString()).take(4800)
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    private fun shape(
+        color: Int = panelColor,
+        borderColor: Int = cyan,
+        radius: Int = 18
+    ): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = dp(radius).toFloat()
+            setStroke(dp(1), borderColor)
+        }
+    }
+
+    private fun label(
+        value: String,
+        size: Float = 15f,
+        color: Int = white
+    ): TextView {
+        return TextView(this).apply {
+            text = value
+            textSize = size
+            setTextColor(color)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+    }
+
+    private fun button(
+        title: String,
+        action: () -> Unit
+    ): Button {
+        return Button(this).apply {
+            text = title
+            textSize = 13f
+            isAllCaps = false
+            setTextColor(white)
+            background = shape()
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setOnClickListener { action() }
+        }
+    }
+
+    private fun addButton(
+        parent: LinearLayout,
+        title: String,
+        action: () -> Unit
+    ) {
+        parent.addView(
+            button(title, action),
+            LinearLayout.LayoutParams(
+                -1, dp(53)
+            ).apply {
+                topMargin = dp(7)
+            }
+        )
+    }
+
+    private fun section(
+        parent: LinearLayout,
+        title: String
+    ) {
+        parent.addView(
+            label(title, 17f, cyan).apply {
+                setTypeface(null, Typeface.BOLD)
+            }
+        )
+    }
+
+    private fun report(message: String) {
+        if (::status.isInitialized) {
+            status.text =
+                ("• $message\n" + status.text.toString())
+                    .take(4800)
+        }
+
+        if (::stateLabel.isInitialized) {
+            stateLabel.text = message
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            val p = (18 * resources.displayMetrics.density).toInt()
-            setPadding(p, p, p, p)
-        }
-        fun text(value: String, size: Float = 16f) {
-            col.addView(TextView(this).apply {
-                this.text = value; textSize = size; setTextColor(Color.rgb(120, 230, 255))
-                setPadding(0, 9, 0, 9)
-            })
-        }
-        fun button(label: String, callback: () -> Unit) {
-            col.addView(Button(this).apply { this.text = label; setOnClickListener { callback() } })
-        }
-        col.setBackgroundColor(Color.rgb(3, 15, 31))
-        text("J.A.R.V.I.S.", 30f)
-        col.addView(JarvisOrbView(this), LinearLayout.LayoutParams(-1, (260 * resources.displayMetrics.density).toInt()))
-        text("● EN ESPERA", 18f)
-        val advanced = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
-        fun advancedText(value: String, size: Float = 16f) {
-            advanced.addView(TextView(this).apply { text = value; textSize = size; setTextColor(Color.rgb(150, 220, 245)) })
-        }
-        fun advancedButton(label: String, callback: () -> Unit) {
-            advanced.addView(Button(this).apply { text = label; setOnClickListener { callback() } })
-        }
-        button("▶ INICIAR JARVIS") { startServiceMode(WashListenerService.MODE_COMPATIBLE) }
-        button("■ DETENER") { stopService() }
-        button("♿ ACTIVAR ACCESIBILIDAD") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-        button("☾ PERMISO NO MOLESTAR") {
-            startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
-        }
-        button("⚙ MOSTRAR / OCULTAR OPCIONES") {
-            advanced.visibility = if (advanced.visibility == View.VISIBLE) View.GONE else View.VISIBLE
-        }
-        // Options remain collapsed by default; technical tools are kept for troubleshooting.
 
-        advancedText("Di «Jarvis» para abrir ChatGPT, buscar tu chat fijado «SD» e intentar pulsar Voz. Necesitas activar el servicio de Accesibilidad de JARVIS. La interfaz de ChatGPT puede cambiar.")
-        advancedText("1 · PRUEBA DE MICRÓFONOS", 19f)
-        advancedText("Selecciona el micrófono que quieres comprobar. La prueba de sonido es independiente del reconocimiento de la palabra «Jarvis».")
-        devicesSpinner = Spinner(this)
-        advanced.addView(devicesSpinner)
-        advancedButton("ACTUALIZAR MICRÓFONOS") { refreshDevices() }
-        meter = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100; progress = 0; isIndeterminate = false
+        window.statusBarColor = background
+        window.navigationBarColor = background
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        )
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(background)
+            setPadding(dp(16), dp(20), dp(16), dp(24))
         }
-        advanced.addView(meter, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (20 * resources.displayMetrics.density).toInt()))
-        meterText = TextView(this).apply { text = "Sonido: 0/100 · Prueba sin iniciar"; textSize = 14f }
-        advanced.addView(meterText)
-        advancedButton("PROBAR MICRÓFONO · VER BARRA") { startServiceMode(WashListenerService.MODE_MONITOR) }
-        advancedButton("DETENER PRUEBA") { stopService() }
-        advancedText("2 · ESCUCHA DE «JARVIS»", 19f)
-        advancedText("El reconocimiento de Android puede usar otro micrófono y puede detenerse en segundo plano. Si falla el modo local, prueba compatible.")
-        recognitionMode = Spinner(this)
-        recognitionMode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, listOf(
-            "Local (preferido; sin conexión si Android lo permite)",
-            "Compatible (motor Android; podría usar Internet)"
-        ))
-        advanced.addView(recognitionMode)
-        advancedButton("INICIAR JARVIS · ESCUCHAR JARVIS") {
-            startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
+
+        val title = label(
+            "J.A.R.V.I.S.",
+            32f,
+            cyan
+        ).apply {
+            gravity = Gravity.CENTER
+            setTypeface(null, Typeface.BOLD)
         }
-        advancedButton("DETENER JARVIS") { stopService() }
-        advancedText("Comando principal: Jarvis. El reconocimiento de Android puede elegir otro micrófono.", 14f)
-        val aliasInput = EditText(this).apply {
-            hint = "Ej.: uach, was, cuash"
-            setSingleLine(true)
-            setText(getSharedPreferences("atena", MODE_PRIVATE).getString("wash_aliases", ""))
+
+        root.addView(title)
+
+        root.addView(
+            label(
+                "SISTEMA DE ASISTENCIA POR VOZ",
+                11f,
+                muted
+            ).apply {
+                gravity = Gravity.CENTER
+            }
+        )
+
+        root.addView(
+            JarvisOrbView(this),
+            LinearLayout.LayoutParams(
+                -1, dp(230)
+            )
+        )
+
+        stateLabel = label(
+            "● EN ESPERA DE COMANDO",
+            15f,
+            cyan
+        ).apply {
+            gravity = Gravity.CENTER
         }
-        advanced.addView(aliasInput)
-        advancedButton("GUARDAR PRONUNCIACIONES ALTERNATIVAS") {
-            val aliases = WashMatcher.parseAliases(aliasInput.text.toString())
-            getSharedPreferences("atena", MODE_PRIVATE).edit()
-                .putString("wash_aliases", aliases.joinToString(",")).apply()
-            report("Pronunciaciones alternativas guardadas: ${aliases.joinToString(", ").ifBlank { "ninguna" }}")
+
+        root.addView(stateLabel)
+
+        val mainControls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = shape()
         }
-        advancedButton("PROBAR AHORA · ABRIR SD Y PULSAR VOZ") {
-            val ok = WashListenerService.openFromMenuIfRunning() ||
+
+        addButton(
+            mainControls,
+            "▶ ACTIVAR JARVIS"
+        ) {
+            startServiceMode(
+                WashListenerService.MODE_COMPATIBLE
+            )
+        }
+
+        addButton(
+            mainControls,
+            "◉ ABRIR CHAT SD + VOZ"
+        ) {
+            val ok =
+                WashListenerService.openFromMenuIfRunning() ||
                 WashAccessibilityService.requestOpenSdAndVoice()
-            report(if (ok) "JARVIS está buscando el chat SD. Revisa los mensajes de diagnóstico." else
-                "Debes habilitar Accesibilidad de JARVIS para localizar SD y pulsar Voz.")
+
+            report(
+                if (ok) {
+                    "Buscando ChatGPT y conversación SD..."
+                } else {
+                    "Activa Accesibilidad de JARVIS."
+                }
+            )
         }
-        advancedText("3 · ACCESIBILIDAD: NECESARIA PARA ABRIR SD Y PULSAR VOZ", 19f)
-        advancedText("Para buscar SD, JARVIS necesita leer los títulos y descripciones accesibles de la interfaz de ChatGPT. Solo intentará pulsar el chat «SD» y el botón de Voz identificado por su etiqueta; no guarda conversaciones ni hace capturas. Es un permiso sensible: habilítalo solo si confías en JARVIS.")
-        advancedButton("ACTIVAR ACCESIBILIDAD PARA SD Y VOZ") {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+
+        addButton(
+            mainControls,
+            "■ DETENER JARVIS"
+        ) {
+            stopServiceMode()
         }
+
+        root.addView(mainControls)
+
+        val advanced = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+            background = shape()
+        }
+
+        addButton(
+            root,
+            "☰ MENÚ Y CONFIGURACIÓN"
+        ) {
+            advanced.visibility =
+                if (advanced.visibility == View.VISIBLE) {
+                    View.GONE
+                } else {
+                    View.VISIBLE
+                }
+        }
+
+        section(advanced, "MICRÓFONOS")
+
+        advanced.addView(
+            label(
+                "Selecciona el micrófono para la prueba:",
+                14f,
+                muted
+            )
+        )
+
+        devicesSpinner = Spinner(this).apply {
+            background = shape(
+                Color.rgb(230, 245, 250),
+                cyan
+            )
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+        }
+
+        advanced.addView(
+            devicesSpinner,
+            LinearLayout.LayoutParams(
+                -1, dp(58)
+            )
+        )
+
+        addButton(
+            advanced,
+            "↻ ACTUALIZAR MICRÓFONOS"
+        ) {
+            refreshDevices()
+        }
+
+        section(advanced, "PRUEBA DE MICRÓFONO")
+
+        meter = ProgressBar(
+            this,
+            null,
+            android.R.attr.progressBarStyleHorizontal
+        ).apply {
+            max = 100
+            progress = 0
+            isIndeterminate = false
+
+            progressTintList =
+                android.content.res.ColorStateList.valueOf(cyan)
+
+            progressBackgroundTintList =
+                android.content.res.ColorStateList.valueOf(
+                    Color.rgb(55, 83, 105)
+                )
+        }
+
+        advanced.addView(
+            meter,
+            LinearLayout.LayoutParams(
+                -1, dp(24)
+            ).apply {
+                topMargin = dp(10)
+                bottomMargin = dp(10)
+            }
+        )
+
+        meterText = label(
+            "NIVEL: 0/100\nPrueba sin iniciar",
+            14f,
+            white
+        )
+
+        advanced.addView(meterText)
+
+        addButton(
+            advanced,
+            "🎤 PROBAR MICRÓFONO"
+        ) {
+            startServiceMode(
+                WashListenerService.MODE_MONITOR
+            )
+        }
+
+        addButton(
+            advanced,
+            "DETENER PRUEBA"
+        ) {
+            stopServiceMode()
+        }
+
+        section(advanced, "RECONOCIMIENTO DE VOZ")
+
+        recognitionMode = Spinner(this)
+
+        val recognitionOptions = listOf(
+            "Local (si está disponible)",
+            "Compatible con Android"
+        )
+
+        recognitionMode.adapter = spinnerAdapter(
+            recognitionOptions
+        )
+
+        recognitionMode.background = shape(
+            Color.rgb(230, 245, 250),
+            cyan
+        )
+
+        advanced.addView(
+            recognitionMode,
+            LinearLayout.LayoutParams(
+                -1, dp(55)
+            )
+        )
+
+        addButton(
+            advanced,
+            "INICIAR ESCUCHA CON MODO ELEGIDO"
+        ) {
+            val mode =
+                if (recognitionMode.selectedItemPosition == 0) {
+                    WashListenerService.MODE_LOCAL
+                } else {
+                    WashListenerService.MODE_COMPATIBLE
+                }
+
+            startServiceMode(mode)
+        }
+
+        advanced.addView(
+            label(
+                "El reconocimiento de Android puede utilizar " +
+                "un micrófono distinto al seleccionado " +
+                "para la prueba.",
+                12f,
+                muted
+            )
+        )
+
+        section(advanced, "PRONUNCIACIONES ALTERNATIVAS")
+
+        val aliasInput = EditText(this).apply {
+            hint = "Ej.: yarvis, jarbis"
+            setHintTextColor(muted)
+            setTextColor(white)
+            setSingleLine(true)
+            background = shape()
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+
+            setText(
+                getSharedPreferences(
+                    "atena",
+                    MODE_PRIVATE
+                ).getString("wash_aliases", "")
+            )
+        }
+
+        advanced.addView(aliasInput)
+
+        addButton(
+            advanced,
+            "GUARDAR PRONUNCIACIONES"
+        ) {
+            val aliases = WashMatcher.parseAliases(
+                aliasInput.text.toString()
+            )
+
+            getSharedPreferences(
+                "atena",
+                MODE_PRIVATE
+            ).edit()
+                .putString(
+                    "wash_aliases",
+                    aliases.joinToString(",")
+                )
+                .apply()
+
+            report("Pronunciaciones guardadas.")
+        }
+
+        section(advanced, "CONFIGURACIÓN")
+
+        addButton(
+            advanced,
+            "ACTIVAR ACCESIBILIDAD"
+        ) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_ACCESSIBILITY_SETTINGS
+                )
+            )
+        }
+
+        addButton(
+            advanced,
+            "PERMISO NO MOLESTAR"
+        ) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
+                )
+            )
+        }
+
         val autoRearm = CheckBox(this).apply {
-            text = "Reactivar JARVIS cuando salga de ChatGPT o parezca terminar Voz (experimental)"
-            isChecked = getSharedPreferences("atena", MODE_PRIVATE).getBoolean("auto_rearm", true)
+            text = "Reactivar escucha después de ChatGPT"
+            setTextColor(white)
+            buttonTintList =
+                android.content.res.ColorStateList.valueOf(cyan)
+
+            isChecked = getSharedPreferences(
+                "atena",
+                MODE_PRIVATE
+            ).getBoolean("auto_rearm", true)
+
             setOnCheckedChangeListener { _, checked ->
-                getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("auto_rearm", checked).apply()
-                report(if (checked) "Reactivación experimental activada." else "Reactivación experimental desactivada.")
+                getSharedPreferences(
+                    "atena",
+                    MODE_PRIVATE
+                ).edit()
+                    .putBoolean("auto_rearm", checked)
+                    .apply()
             }
         }
+
         advanced.addView(autoRearm)
-        // V1.4 mostraba activado el valor por defecto sin guardarlo. Alineamos UI y servicio.
-        if (!getSharedPreferences("atena", MODE_PRIVATE).contains("auto_rearm")) {
-            getSharedPreferences("atena", MODE_PRIVATE).edit().putBoolean("auto_rearm", true).apply()
+
+        if (
+            !getSharedPreferences(
+                "atena",
+                MODE_PRIVATE
+            ).contains("auto_rearm")
+        ) {
+            getSharedPreferences(
+                "atena",
+                MODE_PRIVATE
+            ).edit()
+                .putBoolean("auto_rearm", true)
+                .apply()
         }
-        advancedText("Esta opción depende de que ChatGPT exponga cambios detectables en Accesibilidad. Puede interferir con Voz en segundo plano: desmárcala si ocurre.")
-        advancedText("V1.5: al salir de ChatGPT o cuando reaparece el cuadro para escribir, JARVIS reintenta escuchar «Jarvis». Durante una llamada de Voz mantiene liberado el micrófono; reactivarlo al finalizar es experimental.")
-        advancedText("Tras detectar «Jarvis», JARVIS libera el micrófono. Si ChatGPT cambia el nombre del botón de Voz o no muestra SD, JARVIS lo indicará sin pulsar puntos desconocidos. La reactivación no es infalible.")
-        advancedButton("REANUDAR ESCUCHA JARVIS") {
-            startServiceMode(if (recognitionMode.selectedItemPosition == 0) WashListenerService.MODE_LOCAL else WashListenerService.MODE_COMPATIBLE)
-        }
-        val diagButton = Button(this).apply { text = "◉ MOSTRAR / OCULTAR DIAGNÓSTICO" }
-        advanced.addView(diagButton)
-        advancedText("DIAGNÓSTICO", 19f)
-        status = TextView(this).apply {
-            textSize = 14f
-            text = getSharedPreferences("atena", MODE_PRIVATE)
-                .getString("last_status", "• JARVIS lista. Prueba primero el sonido.")
-            setPadding(0, 8, 0, 18)
-        }
+
+        section(advanced, "DIAGNÓSTICO")
+
+        status = label(
+            getSharedPreferences(
+                "atena",
+                MODE_PRIVATE
+            ).getString(
+                "last_status",
+                "JARVIS lista."
+            ) ?: "JARVIS lista.",
+            12f,
+            muted
+        )
+
         status.visibility = View.GONE
-        diagButton.setOnClickListener { status.visibility = if (status.visibility == View.GONE) View.VISIBLE else View.GONE }
+
+        addButton(
+            advanced,
+            "MOSTRAR / OCULTAR DIAGNÓSTICO"
+        ) {
+            status.visibility =
+                if (status.visibility == View.VISIBLE) {
+                    View.GONE
+                } else {
+                    View.VISIBLE
+                }
+        }
+
         advanced.addView(status)
-        col.addView(advanced)
-        setContentView(ScrollView(this).apply { addView(col) })
+
+        advanced.addView(
+            label(
+                "JARVIS V1.7.2\n" +
+                "ChatGPT · SD · Control de Voz",
+                12f,
+                cyan
+            ).apply {
+                gravity = Gravity.CENTER
+            }
+        )
+
+        root.addView(advanced)
+
+        setContentView(
+            ScrollView(this).apply {
+                fillViewport = true
+                addView(root)
+            }
+        )
+
         permissions()
         refreshDevices()
     }
 
-    private fun permissions() {
-        val requests = listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS, Manifest.permission.BLUETOOTH_CONNECT)
-            .filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (requests.isNotEmpty()) requestPermissions(requests.toTypedArray(), 15)
+    private fun spinnerAdapter(
+        items: List<String>
+    ): ArrayAdapter<String> {
+        return object : ArrayAdapter<String>(
+            this,
+            android.R.layout.simple_spinner_item,
+            items
+        ) {
+            override fun getView(
+                position: Int,
+                convertView: View?,
+                parent: android.view.ViewGroup
+            ): View {
+                return super.getView(
+                    position,
+                    convertView,
+                    parent
+                ).apply {
+                    if (this is TextView) {
+                        setTextColor(Color.BLACK)
+                        textSize = 14f
+                        setPadding(
+                            dp(12), dp(8),
+                            dp(12), dp(8)
+                        )
+                    }
+                }
+            }
+
+            override fun getDropDownView(
+                position: Int,
+                convertView: View?,
+                parent: android.view.ViewGroup
+            ): View {
+                return super.getDropDownView(
+                    position,
+                    convertView,
+                    parent
+                ).apply {
+                    setBackgroundColor(
+                        Color.rgb(235, 247, 252)
+                    )
+
+                    if (this is TextView) {
+                        setTextColor(Color.BLACK)
+                        textSize = 14f
+                        setPadding(
+                            dp(12), dp(14),
+                            dp(12), dp(14)
+                        )
+                    }
+                }
+            }
+        }
     }
 
-    private fun label(device: AudioDeviceInfo): String {
+    private fun permissions() {
+        val requests = listOf(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.POST_NOTIFICATIONS,
+            Manifest.permission.BLUETOOTH_CONNECT
+        ).filter {
+            checkSelfPermission(it) !=
+                PackageManager.PERMISSION_GRANTED
+        }
+
+        if (requests.isNotEmpty()) {
+            requestPermissions(
+                requests.toTypedArray(),
+                15
+            )
+        }
+    }
+
+    private fun deviceLabel(
+        device: AudioDeviceInfo
+    ): String {
         val name = when (device.type) {
-            AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Micrófono del teléfono"
-            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Auriculares con cable"
-            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth (llamadas)"
-            AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE"
-            AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_USB_DEVICE -> "Micrófono USB"
+            AudioDeviceInfo.TYPE_BUILTIN_MIC ->
+                "Micrófono del teléfono"
+
+            AudioDeviceInfo.TYPE_WIRED_HEADSET ->
+                "Auriculares con cable"
+
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO ->
+                "Bluetooth (llamadas)"
+
+            AudioDeviceInfo.TYPE_BLE_HEADSET ->
+                "Bluetooth LE"
+
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_DEVICE ->
+                "Micrófono USB"
+
             else -> "Entrada de audio"
         }
+
         return "$name · ${device.productName} · ID ${device.id}"
     }
 
     private fun refreshDevices() {
         try {
-            inputs = getSystemService(AudioManager::class.java)
-                .getDevices(AudioManager.GET_DEVICES_INPUTS).toList()
-            devicesSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item,
-                inputs.map(::label).ifEmpty { listOf("Sin micrófonos detectados") })
-            val headsetIndex = inputs.indexOfFirst { it.type in listOf(AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-                AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_WIRED_HEADSET) }
-            if (headsetIndex >= 0) devicesSpinner.setSelection(headsetIndex)
-            report("Micrófonos conectados (${inputs.size}): " + inputs.joinToString(" | ") { label(it) }.ifBlank { "ninguno" })
+            inputs = getSystemService(
+                AudioManager::class.java
+            ).getDevices(
+                AudioManager.GET_DEVICES_INPUTS
+            ).toList()
+
+            val options = inputs.map(::deviceLabel)
+                .ifEmpty {
+                    listOf("Sin micrófonos detectados")
+                }
+
+            devicesSpinner.adapter =
+                spinnerAdapter(options)
+
+            val preferredIndex = inputs.indexOfFirst {
+                it.type in listOf(
+                    AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                    AudioDeviceInfo.TYPE_BLE_HEADSET,
+                    AudioDeviceInfo.TYPE_USB_HEADSET,
+                    AudioDeviceInfo.TYPE_WIRED_HEADSET
+                )
+            }
+
+            if (preferredIndex >= 0) {
+                devicesSpinner.setSelection(
+                    preferredIndex
+                )
+            }
+
+            report(
+                "Micrófonos detectados: ${inputs.size}"
+            )
         } catch (ex: Exception) {
-            report("Error al consultar micrófonos: ${ex.message}")
+            report(
+                "Error consultando micrófonos: ${ex.message}"
+            )
         }
     }
 
     private fun startServiceMode(mode: String) {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            report("Falta permiso de micrófono."); permissions(); return
+        if (
+            checkSelfPermission(
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            report("Falta permiso de micrófono.")
+            permissions()
+            return
         }
-        val device = inputs.getOrNull(devicesSpinner.selectedItemPosition)
+
+        val device = inputs.getOrNull(
+            devicesSpinner.selectedItemPosition
+        )
+
         if (device == null) {
-            report("Actualiza la lista de micrófonos."); return
+            report("Actualiza la lista de micrófonos.")
+            return
         }
+
         try {
-            startForegroundService(Intent(this, WashListenerService::class.java).apply {
-                action = WashListenerService.ACTION_START
-                putExtra(WashListenerService.EXTRA_MODE, mode)
-                putExtra(WashListenerService.EXTRA_INPUT_ID, device.id)
-            })
-            report("Solicitado: $mode · ${device.productName}")
+            startForegroundService(
+                Intent(
+                    this,
+                    WashListenerService::class.java
+                ).apply {
+                    action = WashListenerService.ACTION_START
+
+                    putExtra(
+                        WashListenerService.EXTRA_MODE,
+                        mode
+                    )
+
+                    putExtra(
+                        WashListenerService.EXTRA_INPUT_ID,
+                        device.id
+                    )
+                }
+            )
+
+            listening = true
+
+            stateLabel.text =
+                if (mode == WashListenerService.MODE_MONITOR) {
+                    "● PROBANDO MICRÓFONO"
+                } else {
+                    "● ESCUCHANDO JARVIS"
+                }
+
+            report(
+                "Modo iniciado: $mode · ${device.productName}"
+            )
         } catch (ex: Exception) {
-            report("No se pudo iniciar la escucha: ${ex.message}")
+            report(
+                "No se pudo iniciar: ${ex.message}"
+            )
         }
     }
 
-    private fun stopService() {
-        startService(Intent(this, WashListenerService::class.java).apply { action = WashListenerService.ACTION_STOP })
+    private fun stopServiceMode() {
+        try {
+            startService(
+                Intent(
+                    this,
+                    WashListenerService::class.java
+                ).apply {
+                    action = WashListenerService.ACTION_STOP
+                }
+            )
+
+            listening = false
+            stateLabel.text = "● EN ESPERA"
+            meter.progress = 0
+
+            report("JARVIS detenida.")
+        } catch (ex: Exception) {
+            report(
+                "No se pudo detener: ${ex.message}"
+            )
+        }
     }
 
     override fun onStart() {
         super.onStart()
+
         val filter = IntentFilter().apply {
-            addAction(WashListenerService.ACTION_STATUS)
-            addAction(WashListenerService.ACTION_METER)
+            addAction(
+                WashListenerService.ACTION_STATUS
+            )
+
+            addAction(
+                WashListenerService.ACTION_METER
+            )
         }
-        registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+
+        registerReceiver(
+            statusReceiver,
+            filter,
+            Context.RECEIVER_NOT_EXPORTED
+        )
     }
 
     override fun onStop() {
