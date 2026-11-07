@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -17,6 +18,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -30,7 +32,7 @@ import android.widget.TextView
 
 class MainActivity : Activity() {
 
-    private val background = Color.rgb(3, 10, 22)
+    private val bgColor = Color.rgb(3, 10, 22)
     private val panelColor = Color.rgb(10, 27, 45)
     private val cyan = Color.rgb(0, 225, 255)
     private val white = Color.WHITE
@@ -44,13 +46,9 @@ class MainActivity : Activity() {
     private lateinit var stateLabel: TextView
 
     private var inputs: List<AudioDeviceInfo> = emptyList()
-    private var listening = false
 
     private val statusReceiver = object : BroadcastReceiver() {
-        override fun onReceive(
-            context: Context?,
-            intent: Intent?
-        ) {
+        override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
                 WashListenerService.ACTION_METER -> {
                     val level = intent.getIntExtra(
@@ -63,8 +61,7 @@ class MainActivity : Activity() {
                         WashListenerService.EXTRA_SOURCE
                     ) ?: "Sin fuente confirmada"
 
-                    meterText.text =
-                        "NIVEL: $level/100\n$source"
+                    meterText.text = "NIVEL: $level/100\n$source"
                 }
 
                 WashListenerService.ACTION_STATUS -> {
@@ -83,33 +80,31 @@ class MainActivity : Activity() {
         color: Int = panelColor,
         borderColor: Int = cyan,
         radius: Int = 18
-    ): GradientDrawable {
-        return GradientDrawable().apply {
+    ): GradientDrawable =
+        GradientDrawable().apply {
             setColor(color)
             cornerRadius = dp(radius).toFloat()
             setStroke(dp(1), borderColor)
         }
-    }
 
     private fun label(
         value: String,
         size: Float = 15f,
         color: Int = white
-    ): TextView {
-        return TextView(this).apply {
+    ): TextView =
+        TextView(this).apply {
             text = value
             textSize = size
             setTextColor(color)
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-    }
 
     private fun button(
         title: String,
         action: () -> Unit
-    ): Button {
-        return Button(this).apply {
+    ): Button =
+        Button(this).apply {
             text = title
             textSize = 13f
             isAllCaps = false
@@ -118,7 +113,6 @@ class MainActivity : Activity() {
             setPadding(dp(8), dp(8), dp(8), dp(8))
             setOnClickListener { action() }
         }
-    }
 
     private fun addButton(
         parent: LinearLayout,
@@ -128,17 +122,15 @@ class MainActivity : Activity() {
         parent.addView(
             button(title, action),
             LinearLayout.LayoutParams(
-                -1, dp(53)
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(53)
             ).apply {
                 topMargin = dp(7)
             }
         )
     }
 
-    private fun section(
-        parent: LinearLayout,
-        title: String
-    ) {
+    private fun section(parent: LinearLayout, title: String) {
         parent.addView(
             label(title, 17f, cyan).apply {
                 setTypeface(null, Typeface.BOLD)
@@ -149,8 +141,7 @@ class MainActivity : Activity() {
     private fun report(message: String) {
         if (::status.isInitialized) {
             status.text =
-                ("• $message\n" + status.text.toString())
-                    .take(4800)
+                ("• $message\n" + status.text.toString()).take(4800)
         }
 
         if (::stateLabel.isInitialized) {
@@ -161,28 +152,24 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.statusBarColor = background
-        window.navigationBarColor = background
+        window.statusBarColor = bgColor
+        window.navigationBarColor = bgColor
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         )
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(background)
+            setBackgroundColor(bgColor)
             setPadding(dp(16), dp(20), dp(16), dp(24))
         }
 
-        val title = label(
-            "J.A.R.V.I.S.",
-            32f,
-            cyan
-        ).apply {
-            gravity = Gravity.CENTER
-            setTypeface(null, Typeface.BOLD)
-        }
-
-        root.addView(title)
+        root.addView(
+            label("J.A.R.V.I.S.", 32f, cyan).apply {
+                gravity = Gravity.CENTER
+                setTypeface(null, Typeface.BOLD)
+            }
+        )
 
         root.addView(
             label(
@@ -197,7 +184,8 @@ class MainActivity : Activity() {
         root.addView(
             JarvisOrbView(this),
             LinearLayout.LayoutParams(
-                -1, dp(230)
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(230)
             )
         )
 
@@ -217,19 +205,11 @@ class MainActivity : Activity() {
             background = shape()
         }
 
-        addButton(
-            mainControls,
-            "▶ ACTIVAR JARVIS"
-        ) {
-            startServiceMode(
-                WashListenerService.MODE_COMPATIBLE
-            )
+        addButton(mainControls, "▶ ACTIVAR JARVIS") {
+            startServiceMode(WashListenerService.MODE_COMPATIBLE)
         }
 
-        addButton(
-            mainControls,
-            "◉ ABRIR CHAT SD + VOZ"
-        ) {
+        addButton(mainControls, "◉ ABRIR CHAT SD + VOZ") {
             val ok =
                 WashListenerService.openFromMenuIfRunning() ||
                 WashAccessibilityService.requestOpenSdAndVoice()
@@ -243,10 +223,7 @@ class MainActivity : Activity() {
             )
         }
 
-        addButton(
-            mainControls,
-            "■ DETENER JARVIS"
-        ) {
+        addButton(mainControls, "■ DETENER JARVIS") {
             stopServiceMode()
         }
 
@@ -259,10 +236,7 @@ class MainActivity : Activity() {
             background = shape()
         }
 
-        addButton(
-            root,
-            "☰ MENÚ Y CONFIGURACIÓN"
-        ) {
+        addButton(root, "☰ MENÚ Y CONFIGURACIÓN") {
             advanced.visibility =
                 if (advanced.visibility == View.VISIBLE) {
                     View.GONE
@@ -292,14 +266,12 @@ class MainActivity : Activity() {
         advanced.addView(
             devicesSpinner,
             LinearLayout.LayoutParams(
-                -1, dp(58)
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(58)
             )
         )
 
-        addButton(
-            advanced,
-            "↻ ACTUALIZAR MICRÓFONOS"
-        ) {
+        addButton(advanced, "↻ ACTUALIZAR MICRÓFONOS") {
             refreshDevices()
         }
 
@@ -314,19 +286,16 @@ class MainActivity : Activity() {
             progress = 0
             isIndeterminate = false
 
-            progressTintList =
-                android.content.res.ColorStateList.valueOf(cyan)
-
+            progressTintList = ColorStateList.valueOf(cyan)
             progressBackgroundTintList =
-                android.content.res.ColorStateList.valueOf(
-                    Color.rgb(55, 83, 105)
-                )
+                ColorStateList.valueOf(Color.rgb(55, 83, 105))
         }
 
         advanced.addView(
             meter,
             LinearLayout.LayoutParams(
-                -1, dp(24)
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(24)
             ).apply {
                 topMargin = dp(10)
                 bottomMargin = dp(10)
@@ -341,19 +310,11 @@ class MainActivity : Activity() {
 
         advanced.addView(meterText)
 
-        addButton(
-            advanced,
-            "🎤 PROBAR MICRÓFONO"
-        ) {
-            startServiceMode(
-                WashListenerService.MODE_MONITOR
-            )
+        addButton(advanced, "🎤 PROBAR MICRÓFONO") {
+            startServiceMode(WashListenerService.MODE_MONITOR)
         }
 
-        addButton(
-            advanced,
-            "DETENER PRUEBA"
-        ) {
+        addButton(advanced, "DETENER PRUEBA") {
             stopServiceMode()
         }
 
@@ -361,13 +322,11 @@ class MainActivity : Activity() {
 
         recognitionMode = Spinner(this)
 
-        val recognitionOptions = listOf(
-            "Local (si está disponible)",
-            "Compatible con Android"
-        )
-
         recognitionMode.adapter = spinnerAdapter(
-            recognitionOptions
+            listOf(
+                "Local (si está disponible)",
+                "Compatible con Android"
+            )
         )
 
         recognitionMode.background = shape(
@@ -378,7 +337,8 @@ class MainActivity : Activity() {
         advanced.addView(
             recognitionMode,
             LinearLayout.LayoutParams(
-                -1, dp(55)
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                dp(55)
             )
         )
 
@@ -399,8 +359,7 @@ class MainActivity : Activity() {
         advanced.addView(
             label(
                 "El reconocimiento de Android puede utilizar " +
-                "un micrófono distinto al seleccionado " +
-                "para la prueba.",
+                "un micrófono distinto al seleccionado para la prueba.",
                 12f,
                 muted
             )
@@ -426,10 +385,7 @@ class MainActivity : Activity() {
 
         advanced.addView(aliasInput)
 
-        addButton(
-            advanced,
-            "GUARDAR PRONUNCIACIONES"
-        ) {
+        addButton(advanced, "GUARDAR PRONUNCIACIONES") {
             val aliases = WashMatcher.parseAliases(
                 aliasInput.text.toString()
             )
@@ -449,21 +405,13 @@ class MainActivity : Activity() {
 
         section(advanced, "CONFIGURACIÓN")
 
-        addButton(
-            advanced,
-            "ACTIVAR ACCESIBILIDAD"
-        ) {
+        addButton(advanced, "ACTIVAR ACCESIBILIDAD") {
             startActivity(
-                Intent(
-                    Settings.ACTION_ACCESSIBILITY_SETTINGS
-                )
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             )
         }
 
-        addButton(
-            advanced,
-            "PERMISO NO MOLESTAR"
-        ) {
+        addButton(advanced, "PERMISO NO MOLESTAR") {
             startActivity(
                 Intent(
                     Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS
@@ -474,8 +422,7 @@ class MainActivity : Activity() {
         val autoRearm = CheckBox(this).apply {
             text = "Reactivar escucha después de ChatGPT"
             setTextColor(white)
-            buttonTintList =
-                android.content.res.ColorStateList.valueOf(cyan)
+            buttonTintList = ColorStateList.valueOf(cyan)
 
             isChecked = getSharedPreferences(
                 "atena",
@@ -553,7 +500,7 @@ class MainActivity : Activity() {
 
         setContentView(
             ScrollView(this).apply {
-                fillViewport = true
+                isFillViewport = true
                 addView(root)
             }
         )
@@ -573,7 +520,7 @@ class MainActivity : Activity() {
             override fun getView(
                 position: Int,
                 convertView: View?,
-                parent: android.view.ViewGroup
+                parent: ViewGroup
             ): View {
                 return super.getView(
                     position,
@@ -594,7 +541,7 @@ class MainActivity : Activity() {
             override fun getDropDownView(
                 position: Int,
                 convertView: View?,
-                parent: android.view.ViewGroup
+                parent: ViewGroup
             ): View {
                 return super.getDropDownView(
                     position,
@@ -675,8 +622,7 @@ class MainActivity : Activity() {
                     listOf("Sin micrófonos detectados")
                 }
 
-            devicesSpinner.adapter =
-                spinnerAdapter(options)
+            devicesSpinner.adapter = spinnerAdapter(options)
 
             val preferredIndex = inputs.indexOfFirst {
                 it.type in listOf(
@@ -688,9 +634,7 @@ class MainActivity : Activity() {
             }
 
             if (preferredIndex >= 0) {
-                devicesSpinner.setSelection(
-                    preferredIndex
-                )
+                devicesSpinner.setSelection(preferredIndex)
             }
 
             report(
@@ -743,8 +687,6 @@ class MainActivity : Activity() {
                 }
             )
 
-            listening = true
-
             stateLabel.text =
                 if (mode == WashListenerService.MODE_MONITOR) {
                     "● PROBANDO MICRÓFONO"
@@ -773,7 +715,6 @@ class MainActivity : Activity() {
                 }
             )
 
-            listening = false
             stateLabel.text = "● EN ESPERA"
             meter.progress = 0
 
@@ -789,13 +730,8 @@ class MainActivity : Activity() {
         super.onStart()
 
         val filter = IntentFilter().apply {
-            addAction(
-                WashListenerService.ACTION_STATUS
-            )
-
-            addAction(
-                WashListenerService.ACTION_METER
-            )
+            addAction(WashListenerService.ACTION_STATUS)
+            addAction(WashListenerService.ACTION_METER)
         }
 
         registerReceiver(
