@@ -9,6 +9,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -74,27 +75,23 @@ class WashListenerService : Service() {
         fun rearmAfterChatLeft() {
             current.get()?.let { service ->
                 service.handler.post {
-                    val autoRearm =
-                        service.getSharedPreferences(
-                            "atena",
-                            MODE_PRIVATE
-                        ).getBoolean("auto_rearm", true)
+                    val enabled = service.getSharedPreferences(
+                        "atena", MODE_PRIVATE
+                    ).getBoolean("auto_rearm", true)
 
                     if (
                         service.active &&
                         service.pausedForChat &&
-                        autoRearm
+                        enabled
                     ) {
                         service.publish(
                             "Reactivando JARVIS después de ChatGPT."
                         )
-
                         service.stopCurrentCapture()
                         service.pausedForChat = false
                         service.failures = 0
                         service.mode = service.lastMode
                         service.scheduleRestart(1200)
-
                         service.notifyUser(
                             "JARVIS reactivando escucha"
                         )
@@ -105,7 +102,6 @@ class WashListenerService : Service() {
     }
 
     private lateinit var audioManager: AudioManager
-
     private val handler = Handler(Looper.getMainLooper())
 
     private var recognizer: SpeechRecognizer? = null
@@ -308,6 +304,7 @@ class WashListenerService : Service() {
     ): Int {
         try {
             when (intent?.action) {
+
                 null -> {
                     val saved = getSharedPreferences(
                         "atena",
@@ -336,6 +333,7 @@ class WashListenerService : Service() {
                     ) ?: MODE_COMPATIBLE
 
                     lastMode = mode
+
                     inputId = saved.getInt(
                         "wash_input_id",
                         -1
@@ -346,7 +344,7 @@ class WashListenerService : Service() {
                         notification(
                             "Recuperando escucha JARVIS"
                         ),
-                        PackageManager.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                     )
 
                     startRecognition()
@@ -407,7 +405,7 @@ class WashListenerService : Service() {
                     startForeground(
                         NOTIFICATION_ID,
                         notification("Inicializando $mode"),
-                        PackageManager.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                     )
 
                     if (mode == MODE_MONITOR) {
